@@ -1,0 +1,11 @@
+[package]
+name             = "bar-theme"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bar-core   = { workspace = true }
+bar-config = { workspace = true }
+serde      = { workspace = true }
+iced       = { workspace = true }

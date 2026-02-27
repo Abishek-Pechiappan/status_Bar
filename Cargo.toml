@@ -1,0 +1,77 @@
+[workspace]
+members = [
+    "crates/core",
+    "crates/config",
+    "crates/theme",
+    "crates/system",
+    "crates/hyprland-ipc",
+    "crates/widgets",
+    "crates/renderer",
+    "crates/wayland",
+]
+resolver = "2"
+
+[workspace.package]
+version     = "0.1.0"
+edition     = "2021"
+license     = "MIT"
+rust-version = "1.80"
+
+[workspace.dependencies]
+# ── Internal crates ───────────────────────────────────────────────────────────
+bar-core    = { path = "crates/core" }
+bar-config  = { path = "crates/config" }
+bar-theme   = { path = "crates/theme" }
+bar-system  = { path = "crates/system" }
+bar-ipc     = { path = "crates/hyprland-ipc" }
+bar-widgets = { path = "crates/widgets" }
+bar-renderer = { path = "crates/renderer" }
+bar-wayland = { path = "crates/wayland" }
+
+# ── Async runtime ─────────────────────────────────────────────────────────────
+tokio   = { version = "1", features = ["full"] }
+futures = "0.3"
+
+# ── Serialization ─────────────────────────────────────────────────────────────
+serde      = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml       = "1.0"
+
+# ── Error handling ────────────────────────────────────────────────────────────
+thiserror = "2"
+anyhow    = "1"
+
+# ── Logging ───────────────────────────────────────────────────────────────────
+tracing            = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# ── System info ───────────────────────────────────────────────────────────────
+sysinfo = "0.38"
+
+# ── UI / Wayland ──────────────────────────────────────────────────────────────
+iced           = { version = "0.14", features = ["tokio"] }
+iced_layershell = "0.15"
+
+# ── Filesystem watching ───────────────────────────────────────────────────────
+notify = "8"
+
+# ── Time ──────────────────────────────────────────────────────────────────────
+chrono = { version = "0.4", features = ["clock"] }
+
+# ── Root binary ──────────────────────────────────────────────────────────────
+
+[package]
+name             = "bar"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "bar"
+path = "src/main.rs"
+
+[dependencies]
+bar-wayland.workspace = true
+anyhow.workspace      = true
+tracing.workspace     = true
+tracing-subscriber.workspace = true

@@ -1,0 +1,43 @@
+# bar.toml — example configuration
+# Default location: $XDG_CONFIG_HOME/bar/bar.toml  (~/.config/bar/bar.toml)
+
+[global]
+height         = 40        # bar height in logical pixels
+position       = "top"     # "top" or "bottom"
+exclusive_zone = true      # reserve space so windows don't overlap the bar
+opacity        = 0.95
+
+# ── Widget layout ────────────────────────────────────────────────────────────
+# Available kinds: workspaces | clock | cpu | memory | network | title | battery
+
+[[left]]
+kind = "workspaces"
+
+[[left]]
+kind = "title"
+
+[[center]]
+kind = "clock"
+
+[[right]]
+kind = "network"
+
+[[right]]
+kind = "cpu"
+
+[[right]]
+kind = "memory"
+
+[[right]]
+kind = "battery"      # automatically hidden on desktops with no battery
+
+# ── Theme ────────────────────────────────────────────────────────────────────
+[theme]
+background    = "#1e1e2e"   # Catppuccin Mocha — base
+foreground    = "#cdd6f4"   # Catppuccin Mocha — text
+accent        = "#cba6f7"   # Catppuccin Mocha — mauve
+font          = "JetBrains Mono"
+font_size     = 13.0
+border_radius = 6.0
+padding       = 8
+gap           = 4

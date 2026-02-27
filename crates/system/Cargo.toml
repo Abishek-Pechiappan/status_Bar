@@ -1,0 +1,12 @@
+[package]
+name             = "bar-system"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+bar-core  = { workspace = true }
+sysinfo   = { workspace = true }
+tokio     = { workspace = true }
+tracing   = { workspace = true }
+thiserror = { workspace = true }
