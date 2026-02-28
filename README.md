@@ -44,15 +44,17 @@ A production-grade, modular, Wayland-native status bar for Hyprland — written 
 
 ## Installation
 
+> **Requires:** `git` and Rust. Install Rust with: `curl https://sh.rustup.rs | sh`
+
 ### Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Abishek-Pechiappan/status_Bar/main/install.sh | bash
+git clone https://github.com/Abishek-Pechiappan/status_Bar
+cd status_Bar
+bash install.sh
 ```
 
-That's it. The script clones the repo, builds, installs `bar` and `bar-editor` to `~/.local/bin`, copies the example config, and installs a `bar-update` command for future updates.
-
-> **Requires:** `git` and Rust/`cargo`. Install Rust with: `curl https://sh.rustup.rs | sh`
+The script builds both binaries, installs them to `~/.local/bin`, copies the example config to `~/.config/bar/bar.toml`, and sets up the `bar-update` command.
 
 ### Update
 

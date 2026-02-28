@@ -3,7 +3,7 @@ set -euo pipefail
 
 REPO_URL="https://github.com/Abishek-Pechiappan/status_Bar"
 INSTALL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/bar"
-BIN_DIR="$HOME/.local/bin"
+BIN_DIR="${HOME}/.local/bin"
 CFG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/bar"
 
 # ── Colors ────────────────────────────────────────────────────────────────────
@@ -34,26 +34,26 @@ install -m755 "$INSTALL_DIR/target/release/bar"        "$BIN_DIR/bar"
 install -m755 "$INSTALL_DIR/target/release/bar-editor" "$BIN_DIR/bar-editor"
 ok "Installed bar and bar-editor to $BIN_DIR"
 
-# ── Install bar-update helper ─────────────────────────────────────────────────
-cat > "$BIN_DIR/bar-update" <<EOF
+# ── Install bar-update helper (uses $HOME at runtime, not hardcoded) ──────────
+cat > "$BIN_DIR/bar-update" <<'SCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
-INSTALL_DIR="${INSTALL_DIR}"
-BIN_DIR="${BIN_DIR}"
-info() { printf '\033[34m→\033[0m %s\n' "\$*"; }
-ok()   { printf '\033[32m✓\033[0m %s\n' "\$*"; }
+INSTALL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/bar"
+BIN_DIR="$HOME/.local/bin"
+info() { printf '\033[34m→\033[0m %s\n' "$*"; }
+ok()   { printf '\033[32m✓\033[0m %s\n' "$*"; }
 info "Pulling latest changes..."
-git -C "\$INSTALL_DIR" pull --ff-only
+git -C "$INSTALL_DIR" pull --ff-only
 info "Building..."
-cargo build --release --manifest-path "\$INSTALL_DIR/Cargo.toml"
-install -m755 "\$INSTALL_DIR/target/release/bar"        "\$BIN_DIR/bar"
-install -m755 "\$INSTALL_DIR/target/release/bar-editor" "\$BIN_DIR/bar-editor"
+cargo build --release --manifest-path "$INSTALL_DIR/Cargo.toml"
+install -m755 "$INSTALL_DIR/target/release/bar"        "$BIN_DIR/bar"
+install -m755 "$INSTALL_DIR/target/release/bar-editor" "$BIN_DIR/bar-editor"
 ok "Updated."
 pkill -x bar 2>/dev/null || true
 sleep 0.4
 nohup bar >/dev/null 2>&1 &
 ok "Bar restarted."
-EOF
+SCRIPT
 chmod +x "$BIN_DIR/bar-update"
 ok "Installed bar-update to $BIN_DIR"
 
@@ -69,7 +69,7 @@ fi
 # ── PATH hint ─────────────────────────────────────────────────────────────────
 if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     echo ""
-    printf '\033[33m!\033[0m Add %s to your PATH:\n' "$BIN_DIR"
+    printf '\033[33m!\033[0m Add ~/.local/bin to your PATH:\n'
     echo "    echo 'export PATH=\"\$HOME/.local/bin:\$PATH\"' >> ~/.bashrc && source ~/.bashrc"
 fi
 
