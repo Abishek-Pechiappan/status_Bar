@@ -3,7 +3,7 @@ PREFIX ?= $(HOME)/.local
 .PHONY: build install update upgrade clean check
 
 build:
-	cargo build --release
+	cargo build --release --workspace
 
 install: build
 	install -Dm755 target/release/bar        $(PREFIX)/bin/bar

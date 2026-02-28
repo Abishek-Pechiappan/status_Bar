@@ -26,7 +26,7 @@ fi
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 info "Building (this takes a minute the first time)..."
-cargo build --release --manifest-path "$INSTALL_DIR/Cargo.toml"
+cargo build --release --workspace --manifest-path "$INSTALL_DIR/Cargo.toml"
 
 # ── Install binaries ──────────────────────────────────────────────────────────
 mkdir -p "$BIN_DIR"
@@ -45,7 +45,7 @@ ok()   { printf '\033[32m✓\033[0m %s\n' "$*"; }
 info "Pulling latest changes..."
 git -C "$INSTALL_DIR" pull --ff-only
 info "Building..."
-cargo build --release --manifest-path "$INSTALL_DIR/Cargo.toml"
+cargo build --release --workspace --manifest-path "$INSTALL_DIR/Cargo.toml"
 install -m755 "$INSTALL_DIR/target/release/bar"        "$BIN_DIR/bar"
 install -m755 "$INSTALL_DIR/target/release/bar-editor" "$BIN_DIR/bar-editor"
 ok "Updated."
