@@ -401,16 +401,25 @@ impl Bar {
             .spacing(gap)
             .align_y(iced::Alignment::Center);
 
+        // Use horizontal-only padding so widgets vertically centre in the bar.
+        let hpad = [0.0f32, pad as f32];
+
         let bar = row![
             container(left)
                 .width(Length::FillPortion(2))
-                .padding(pad),
+                .height(Length::Fill)
+                .align_y(iced::Alignment::Center)
+                .padding(hpad),
             container(center)
                 .center_x(Length::FillPortion(1))
-                .padding(pad),
+                .height(Length::Fill)
+                .align_y(iced::Alignment::Center)
+                .padding(hpad),
             container(right)
                 .align_right(Length::FillPortion(2))
-                .padding(pad),
+                .height(Length::Fill)
+                .align_y(iced::Alignment::Center)
+                .padding(hpad),
         ]
         .width(Length::Fill)
         .height(Length::Fill);

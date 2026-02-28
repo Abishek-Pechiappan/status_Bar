@@ -131,8 +131,16 @@ struct Editor {
     border_color_buf:    String,
     clock_format_buf:    String,
     date_format_buf:     String,
-    // Colour picker — which field's grid is open
-    active_picker:       Option<ColorField>,
+    // Colour picker state
+    active_picker: Option<ColorField>,
+    /// HSV of the last colour cell clicked in the grid.
+    picker_h:     f32,
+    picker_s:     f32,
+    picker_v:     f32,
+    /// Saturation scale (0 = grey, 1 = full grid saturation).
+    picker_sat:   f32,
+    /// Alpha / opacity (0 = transparent, 1 = opaque).
+    picker_alpha: f32,
 }
 
 // ── Messages ──────────────────────────────────────────────────────────────────
@@ -176,7 +184,9 @@ enum Message {
     WorkspaceShowAll(bool), // true = all, false = active only
     // Colour picker
     TogglePicker(ColorField),
-    ColorGridPicked(String),
+    ColorGridPicked(f32, f32, f32),  // h, s, v from the grid cell
+    PickerSat(f32),
+    PickerAlpha(f32),
     ApplyThemePreset(usize),
     ResetDefaults,
 
@@ -224,6 +234,11 @@ impl Editor {
                 clock_format_buf,
                 date_format_buf,
                 active_picker: None,
+                picker_h:      220.0,
+                picker_s:      1.0,
+                picker_v:      0.8,
+                picker_sat:    1.0,
+                picker_alpha:  1.0,
             },
             Task::none(),
         )
@@ -271,7 +286,46 @@ impl Editor {
         self.border_color_buf = self.config.theme.border_color.clone();
         self.clock_format_buf = self.config.theme.clock_format.clone();
         self.date_format_buf  = self.config.theme.date_format.clone();
-        self.active_picker    = None; // close picker when presets/reset are applied
+        self.active_picker = None; // close picker when presets/reset are applied
+        self.picker_sat    = 1.0;
+        self.picker_alpha  = 1.0;
+    }
+
+    /// Recompute the colour from stored HSV + saturation scale + alpha and
+    /// write it back to whichever colour field the picker is open for.
+    fn apply_grid_color(&mut self) {
+        if self.active_picker.is_none() { return; }
+        let s = (self.picker_s * self.picker_sat).clamp(0.0, 1.0);
+        let (r, g, b) = hsv_to_rgb(self.picker_h, s, self.picker_v);
+        let hex = if self.picker_alpha < 0.995 {
+            let a = (self.picker_alpha * 255.0).round() as u8;
+            format!("#{r:02x}{g:02x}{b:02x}{a:02x}")
+        } else {
+            format!("#{r:02x}{g:02x}{b:02x}")
+        };
+        match self.active_picker {
+            Some(ColorField::Background) => {
+                self.bg_buf = hex.clone();
+                self.config.theme.background = hex;
+            }
+            Some(ColorField::Foreground) => {
+                self.fg_buf = hex.clone();
+                self.config.theme.foreground = hex;
+            }
+            Some(ColorField::Accent) => {
+                self.accent_buf = hex.clone();
+                self.config.theme.accent = hex;
+            }
+            Some(ColorField::WidgetBg) => {
+                self.widget_bg_buf = hex.clone();
+                self.config.theme.widget_bg = hex;
+            }
+            Some(ColorField::BorderColor) => {
+                self.border_color_buf = hex.clone();
+                self.config.theme.border_color = hex;
+            }
+            None => {}
+        }
     }
 }
 
@@ -379,34 +433,34 @@ impl Editor {
                 if self.active_picker == Some(field) {
                     self.active_picker = None;
                 } else {
+                    // Restore alpha from the current value if it's an 8-char hex.
+                    let hex = match field {
+                        ColorField::Background  => &self.config.theme.background,
+                        ColorField::Foreground  => &self.config.theme.foreground,
+                        ColorField::Accent      => &self.config.theme.accent,
+                        ColorField::WidgetBg    => &self.config.theme.widget_bg,
+                        ColorField::BorderColor => &self.config.theme.border_color,
+                    };
+                    let trimmed = hex.trim_start_matches('#');
+                    self.picker_alpha = if trimmed.len() == 8 {
+                        u8::from_str_radix(&trimmed[6..8], 16)
+                            .map(|a| a as f32 / 255.0)
+                            .unwrap_or(1.0)
+                    } else {
+                        1.0
+                    };
+                    self.picker_sat = 1.0;
                     self.active_picker = Some(field);
                 }
             }
-            Message::ColorGridPicked(hex) => {
-                match self.active_picker {
-                    Some(ColorField::Background) => {
-                        self.bg_buf = hex.clone();
-                        self.config.theme.background = hex;
-                    }
-                    Some(ColorField::Foreground) => {
-                        self.fg_buf = hex.clone();
-                        self.config.theme.foreground = hex;
-                    }
-                    Some(ColorField::Accent) => {
-                        self.accent_buf = hex.clone();
-                        self.config.theme.accent = hex;
-                    }
-                    Some(ColorField::WidgetBg) => {
-                        self.widget_bg_buf = hex.clone();
-                        self.config.theme.widget_bg = hex;
-                    }
-                    Some(ColorField::BorderColor) => {
-                        self.border_color_buf = hex.clone();
-                        self.config.theme.border_color = hex;
-                    }
-                    None => {}
-                }
+            Message::ColorGridPicked(h, s, v) => {
+                self.picker_h = h;
+                self.picker_s = s;
+                self.picker_v = v;
+                self.apply_grid_color();
             }
+            Message::PickerSat(v)   => { self.picker_sat   = v; self.apply_grid_color(); }
+            Message::PickerAlpha(v) => { self.picker_alpha = v; self.apply_grid_color(); }
 
             Message::ApplyThemePreset(idx) => {
                 if let Some(p) = THEME_PRESETS.get(idx) {
@@ -706,8 +760,10 @@ impl Editor {
             if active { btn.style(iced::widget::button::primary).into() } else { btn.into() }
         };
 
-        let picker_for = |field: ColorField| -> bool {
-            self.active_picker == Some(field)
+        let ps = self.picker_sat;
+        let pa = self.picker_alpha;
+        let picker_for = |field: ColorField| -> Option<(f32, f32)> {
+            if self.active_picker == Some(field) { Some((ps, pa)) } else { None }
         };
 
         // Build theme preset buttons
@@ -913,7 +969,7 @@ fn color_input<'a>(
     config_val: &'a str,
     on_change: fn(String) -> Message,
     field: ColorField,
-    picker_open: bool,
+    picker_state: Option<(f32, f32)>,  // Some((sat_scale, alpha)) when open
 ) -> Element<'a, Message> {
     let swatch_color = parse_hex(config_val).unwrap_or(Color::BLACK);
 
@@ -929,7 +985,7 @@ fn color_input<'a>(
     let valid = is_valid_hex(buf);
     let input = text_input("#rrggbb", buf).on_input(on_change).width(110);
 
-    let pick_icon = if picker_open { "▲" } else { "▼" };
+    let pick_icon = if picker_state.is_some() { "▲" } else { "▼" };
     let pick_btn = button(text(pick_icon).size(11.0))
         .on_press(Message::TogglePicker(field));
 
@@ -940,11 +996,32 @@ fn color_input<'a>(
             .align_y(Alignment::Center),
     );
 
-    if picker_open {
-        let grid_row = labeled_row("", color_grid());
+    if let Some((sat, alpha)) = picker_state {
+        let picker_content = column![
+            color_grid(),
+            row![
+                text("S").width(20).size(12.0),
+                slider(0.0f32..=1.0, sat, Message::PickerSat).step(0.01).width(180),
+                text(format!("{:.0}%", sat * 100.0)).width(40).size(12.0),
+            ].spacing(4).align_y(Alignment::Center),
+            row![
+                text("A").width(20).size(12.0),
+                slider(0.0f32..=1.0, alpha, Message::PickerAlpha).step(0.01).width(180),
+                text(format!("{:.0}%", alpha * 100.0)).width(40).size(12.0),
+            ].spacing(4).align_y(Alignment::Center),
+            container(text(""))
+                .width(Length::Fixed(244.0))
+                .height(Length::Fixed(14.0))
+                .style(move |_: &iced::Theme| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(swatch_color)),
+                    border: iced::Border { radius: 3.0.into(), ..Default::default() },
+                    ..Default::default()
+                }),
+        ].spacing(6);
+        let picker_row = labeled_row("", picker_content);
         let mut col = iced::widget::Column::new().spacing(4);
         col = col.push(main_row);
-        col = col.push(grid_row);
+        col = col.push(picker_row);
         col.into()
     } else {
         main_row
@@ -958,7 +1035,7 @@ fn color_input_optional<'a>(
     config_val: &'a str,
     on_change: fn(String) -> Message,
     field: ColorField,
-    picker_open: bool,
+    picker_state: Option<(f32, f32)>,  // Some((sat_scale, alpha)) when open
 ) -> Element<'a, Message> {
     let swatch_color = parse_hex(config_val).unwrap_or(Color::from_rgba8(0, 0, 0, 0.0));
 
@@ -978,7 +1055,7 @@ fn color_input_optional<'a>(
     let hint = if buf.is_empty() { "none" } else if is_valid_hex(buf) { "" } else { "invalid" };
     let input = text_input("#rrggbb or empty", buf).on_input(on_change).width(110);
 
-    let pick_icon = if picker_open { "▲" } else { "▼" };
+    let pick_icon = if picker_state.is_some() { "▲" } else { "▼" };
     let pick_btn = button(text(pick_icon).size(11.0))
         .on_press(Message::TogglePicker(field));
 
@@ -989,11 +1066,32 @@ fn color_input_optional<'a>(
             .align_y(Alignment::Center),
     );
 
-    if picker_open {
-        let grid_row = labeled_row("", color_grid());
+    if let Some((sat, alpha)) = picker_state {
+        let picker_content = column![
+            color_grid(),
+            row![
+                text("S").width(20).size(12.0),
+                slider(0.0f32..=1.0, sat, Message::PickerSat).step(0.01).width(180),
+                text(format!("{:.0}%", sat * 100.0)).width(40).size(12.0),
+            ].spacing(4).align_y(Alignment::Center),
+            row![
+                text("A").width(20).size(12.0),
+                slider(0.0f32..=1.0, alpha, Message::PickerAlpha).step(0.01).width(180),
+                text(format!("{:.0}%", alpha * 100.0)).width(40).size(12.0),
+            ].spacing(4).align_y(Alignment::Center),
+            container(text(""))
+                .width(Length::Fixed(244.0))
+                .height(Length::Fixed(14.0))
+                .style(move |_: &iced::Theme| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(swatch_color)),
+                    border: iced::Border { radius: 3.0.into(), ..Default::default() },
+                    ..Default::default()
+                }),
+        ].spacing(6);
+        let picker_row = labeled_row("", picker_content);
         let mut col = iced::widget::Column::new().spacing(4);
         col = col.push(main_row);
-        col = col.push(grid_row);
+        col = col.push(picker_row);
         col.into()
     } else {
         main_row
@@ -1021,8 +1119,9 @@ fn color_grid<'a>() -> Element<'a, Message> {
         (0.20, 0.70), // muted
     ];
 
-    let make_cell = |hex: String| -> Element<'a, Message> {
-        let color = parse_hex(&hex).unwrap_or(Color::BLACK);
+    let make_cell = |h: f32, s: f32, v: f32| -> Element<'a, Message> {
+        let (r, g, b) = hsv_to_rgb(h, s, v);
+        let color = Color::from_rgb8(r, g, b);
         mouse_area(
             container(text(""))
                 .width(Length::Fixed(CELL))
@@ -1033,7 +1132,7 @@ fn color_grid<'a>() -> Element<'a, Message> {
                     ..Default::default()
                 }),
         )
-        .on_press(Message::ColorGridPicked(hex))
+        .on_press(Message::ColorGridPicked(h, s, v))
         .into()
     };
 
@@ -1042,7 +1141,7 @@ fn color_grid<'a>() -> Element<'a, Message> {
     // Colour rows
     for &(s, v) in SV_ROWS {
         let cells: Vec<Element<'a, Message>> = (0..HUES)
-            .map(|i| make_cell(hsv_to_hex(i as f32 * HUE_STEP, s, v)))
+            .map(|i| make_cell(i as f32 * HUE_STEP, s, v))
             .collect();
         rows.push(
             iced::widget::Row::from_vec(cells).spacing(GAP).into()
@@ -1053,7 +1152,7 @@ fn color_grid<'a>() -> Element<'a, Message> {
     let grey_cells: Vec<Element<'a, Message>> = (0..HUES)
         .map(|i| {
             let v = 1.0 - (i as f32 / (HUES - 1) as f32) * 0.95;
-            make_cell(hsv_to_hex(0.0, 0.0, v))
+            make_cell(0.0, 0.0, v)
         })
         .collect();
     rows.push(
@@ -1067,13 +1166,16 @@ fn color_grid<'a>() -> Element<'a, Message> {
 
 fn parse_hex(s: &str) -> Option<Color> {
     let s = s.trim_start_matches('#');
-    if s.len() == 6 {
-        let r = u8::from_str_radix(&s[0..2], 16).ok()?;
-        let g = u8::from_str_radix(&s[2..4], 16).ok()?;
-        let b = u8::from_str_radix(&s[4..6], 16).ok()?;
-        Some(Color::from_rgb8(r, g, b))
-    } else {
-        None
+    let byte = |chunk: &str| u8::from_str_radix(chunk, 16).ok();
+    match s.len() {
+        6 => Some(Color::from_rgb8(byte(&s[0..2])?, byte(&s[2..4])?, byte(&s[4..6])?)),
+        8 => Some(Color::from_rgba8(
+            byte(&s[0..2])?,
+            byte(&s[2..4])?,
+            byte(&s[4..6])?,
+            byte(&s[6..8])? as f32 / 255.0,
+        )),
+        _ => None,
     }
 }
 
@@ -1103,10 +1205,6 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
     ((r * 255.0).round() as u8, (g * 255.0).round() as u8, (b * 255.0).round() as u8)
 }
 
-fn hsv_to_hex(h: f32, s: f32, v: f32) -> String {
-    let (r, g, b) = hsv_to_rgb(h, s, v);
-    format!("#{r:02x}{g:02x}{b:02x}")
-}
 
 fn save_config(config: &BarConfig, path: &std::path::Path) -> Result<(), String> {
     let toml_str = toml::to_string_pretty(config)
