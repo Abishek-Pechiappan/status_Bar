@@ -64,6 +64,14 @@ pub struct SystemSnapshot {
     pub battery_percent: Option<u8>,
     /// `true` = charging / full, `false` = discharging, `None` = unknown.
     pub battery_charging: Option<bool>,
+    /// CPU package temperature in °C, `None` if unavailable.
+    pub cpu_temp: Option<f32>,
+    /// Audio output volume (0.0 – 1.0+), `None` if wpctl is unavailable.
+    pub volume: Option<f32>,
+    /// `true` when the default audio sink is muted.
+    pub volume_muted: bool,
+    /// Screen brightness 0–100, `None` if no backlight found.
+    pub brightness: Option<u8>,
 }
 
 impl SystemSnapshot {

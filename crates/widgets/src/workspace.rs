@@ -1,12 +1,13 @@
 use bar_core::{event::Message, state::AppState};
 use bar_theme::Theme;
 use iced::{
-    widget::text,
+    widget::{button, text},
     Alignment, Element,
 };
 
-/// Displays the list of Hyprland workspaces.
+/// Displays the list of Hyprland workspaces as clickable buttons.
 ///
+/// Clicking a workspace button emits `Message::WorkspaceSwitchRequested(id)`.
 /// The active workspace is highlighted with the accent colour.
 #[derive(Debug, Default)]
 pub struct WorkspaceWidget;
@@ -22,19 +23,24 @@ impl WorkspaceWidget {
             .iter()
             .map(|ws| {
                 let is_active = ws.id == state.active_workspace;
+                let id = ws.id;
                 let label = ws.name.clone();
 
-                if is_active {
+                let label_widget = if is_active {
                     text(label)
                         .size(theme.font_size)
                         .color(theme.accent.to_iced())
-                        .into()
                 } else {
                     text(label)
                         .size(theme.font_size)
                         .color(theme.foreground.with_alpha(0.6).to_iced())
-                        .into()
-                }
+                };
+
+                button(label_widget)
+                    .on_press(Message::WorkspaceSwitchRequested(id))
+                    .padding(0)
+                    .style(button::text)
+                    .into()
             })
             .collect();
 

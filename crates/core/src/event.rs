@@ -27,6 +27,10 @@ pub enum Message {
     /// Config file changed on disk — triggers a live reload.
     ConfigReloaded,
 
+    // ── User actions ──────────────────────────────────────────────────────────
+    /// User clicked a workspace button — request Hyprland to switch.
+    WorkspaceSwitchRequested(u32),
+
     // ── Internal ──────────────────────────────────────────────────────────────
     /// One-second timer tick — used to update the clock.
     Tick,

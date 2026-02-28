@@ -12,10 +12,10 @@ use bar_core::{
     state::{AppState, WorkspaceInfo},
 };
 use bar_ipc::{fetch_workspaces, HyprlandEvent, HyprlandIpc};
-use bar_theme::Theme;
+use bar_theme::{Color as ThemeColor, Theme};
 use bar_widgets::{
-    BatteryWidget, ClockWidget, CpuWidget, MemoryWidget, NetworkWidget, TitleWidget,
-    WorkspaceWidget,
+    BatteryWidget, BrightnessWidget, ClockWidget, CpuWidget, DiskWidget, MemoryWidget,
+    NetworkWidget, TempWidget, TitleWidget, VolumeWidget, WorkspaceWidget,
 };
 use chrono::Local;
 use futures::channel::mpsc::Sender;
@@ -39,11 +39,17 @@ const SYSTEM_INTERVAL_MS: u64 = 2_000;
 
 /// Start the Wayland bar.  Never returns under normal operation.
 pub fn run() -> iced_layershell::Result {
-    let config = load_config(default_path()).unwrap_or_default();
-    let height = config.global.height;
-    let anchor = position_to_anchor(config.global.position);
+    let config      = load_config(default_path()).unwrap_or_default();
+    let height      = config.global.height;
+    let anchor      = position_to_anchor(config.global.position);
+    let margin_side = config.global.margin as i32;
+    let margin_edge = config.global.margin_top as i32;
+    let (mt, mb)    = match config.global.position {
+        Position::Top    => (margin_edge, 0),
+        Position::Bottom => (0, margin_edge),
+    };
     let exclusive_zone = if config.global.exclusive_zone {
-        height as i32
+        (height + config.global.margin_top) as i32
     } else {
         0
     };
@@ -53,10 +59,11 @@ pub fn run() -> iced_layershell::Result {
         .style(Bar::style)
         .settings(Settings {
             layer_settings: LayerShellSettings {
-                size: Some((0, height)), // width=0 + L|R anchor = full-width stretch
+                size:           Some((0, height)), // width=0 + L|R anchor = full-width stretch
                 exclusive_zone,
                 anchor,
-                layer: Layer::Top,
+                layer:          Layer::Top,
+                margin:         (mt, margin_side, mb, margin_side),
                 ..Default::default()
             },
             ..Default::default()
@@ -91,10 +98,15 @@ struct Bar {
     title:      TitleWidget,
     // Center
     clock:      ClockWidget,
-    // Right
+    // Right (always present)
     network:    NetworkWidget,
     cpu:        CpuWidget,
     memory:     MemoryWidget,
+    // Right (optional — hidden when sensor unavailable)
+    disk:       DiskWidget,
+    temp:       TempWidget,
+    volume:     VolumeWidget,
+    brightness: BrightnessWidget,
     battery:    BatteryWidget,
 }
 
@@ -113,6 +125,10 @@ impl Bar {
             network:    NetworkWidget::new(),
             cpu:        CpuWidget::new(),
             memory:     MemoryWidget::new(),
+            disk:       DiskWidget::new(),
+            temp:       TempWidget::new(),
+            volume:     VolumeWidget::new(),
+            brightness: BrightnessWidget::new(),
             battery:    BatteryWidget::new(),
         };
 
@@ -182,6 +198,18 @@ impl Bar {
                     Err(e) => warn!("Config reload failed: {e}"),
                 }
             }
+            AppMessage::WorkspaceSwitchRequested(id) => {
+                // Fire-and-forget: ask Hyprland to switch workspace.
+                return Task::perform(
+                    async move {
+                        let _ = tokio::process::Command::new("hyprctl")
+                            .args(["dispatch", "workspace", &id.to_string()])
+                            .output()
+                            .await;
+                    },
+                    |_| Message::Tick, // benign acknowledgement
+                );
+            }
             AppMessage::Tick | AppMessage::Shutdown => {}
         }
         Task::none()
@@ -190,33 +218,44 @@ impl Bar {
     // ── View ──────────────────────────────────────────────────────────────────
 
     fn view(&self) -> Element<'_, Message> {
-        let gap = self.theme.gap as f32;
-        let pad = self.theme.padding;
+        let gap    = self.theme.gap as f32;
+        let pad    = self.theme.padding;
+        let radius = self.theme.border_radius;
+        let wbg    = self.theme.widget_bg;
 
         // ── Left: workspaces + window title ──────────────────────────────────
         let left = {
-            let ws    = self.workspaces.view(&self.state, &self.theme).map(Message::App);
-            let title = self.title.view(&self.state, &self.theme).map(Message::App);
-            row![ws, title].spacing(gap * 3.0).align_y(iced::Alignment::Center)
+            let ws    = pill_wrap(self.workspaces.view(&self.state, &self.theme).map(Message::App), radius, wbg);
+            let title = pill_wrap(self.title.view(&self.state, &self.theme).map(Message::App), radius, wbg);
+            row![ws, title].spacing(gap).align_y(iced::Alignment::Center)
         };
 
         // ── Center: clock ─────────────────────────────────────────────────────
-        let center = self.clock.view(&self.state, &self.theme).map(Message::App);
+        let center = pill_wrap(self.clock.view(&self.state, &self.theme).map(Message::App), radius, wbg);
 
-        // ── Right: network · cpu · memory · battery (optional) ───────────────
-        let net = self.network.view(&self.state, &self.theme).map(Message::App);
-        let cpu = self.cpu.view(&self.state, &self.theme).map(Message::App);
-        let mem = self.memory.view(&self.state, &self.theme).map(Message::App);
+        // ── Right: fixed widgets + optional sensor widgets ────────────────────
+        let net = pill_wrap(self.network.view(&self.state, &self.theme).map(Message::App), radius, wbg);
+        let cpu = pill_wrap(self.cpu.view(&self.state, &self.theme).map(Message::App), radius, wbg);
+        let mem = pill_wrap(self.memory.view(&self.state, &self.theme).map(Message::App), radius, wbg);
 
-        let right: Element<'_, Message> = match self.battery.view(&self.state, &self.theme) {
-            Some(bat) => {
-                let bat = bat.map(Message::App);
-                row![net, cpu, mem, bat].spacing(gap * 2.0).align_y(iced::Alignment::Center).into()
-            }
-            None => {
-                row![net, cpu, mem].spacing(gap * 2.0).align_y(iced::Alignment::Center).into()
-            }
-        };
+        let mut right_items: Vec<Element<'_, Message>> = vec![net, cpu, mem];
+
+        // Sensor widgets are skipped entirely when the sensor isn't available.
+        let sensors: [Option<iced::Element<'_, AppMessage>>; 5] = [
+            self.disk.view(&self.state, &self.theme),
+            self.temp.view(&self.state, &self.theme),
+            self.volume.view(&self.state, &self.theme),
+            self.brightness.view(&self.state, &self.theme),
+            self.battery.view(&self.state, &self.theme),
+        ];
+        for elem in sensors.into_iter().flatten() {
+            right_items.push(pill_wrap(elem.map(Message::App), radius, wbg));
+        }
+
+        let right: Element<'_, Message> = iced::widget::Row::from_vec(right_items)
+            .spacing(gap)
+            .align_y(iced::Alignment::Center)
+            .into();
 
         let bar = row![
             container(left)
@@ -234,9 +273,20 @@ impl Bar {
         .width(Length::Fill)
         .height(Length::Fill);
 
+        let border_color = self.theme.border_color.to_iced();
+        let border_width = self.theme.border_width as f32;
+
         container(bar)
             .width(Length::Fill)
             .height(Length::Fill)
+            .style(move |_: &iced::Theme| iced::widget::container::Style {
+                border: iced::Border {
+                    color: border_color,
+                    width: border_width,
+                    radius: 0.0.into(),
+                },
+                ..Default::default()
+            })
             .into()
     }
 
@@ -357,6 +407,22 @@ fn config_stream() -> impl iced::futures::Stream<Item = Message> {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Wrap a widget element in a styled container with optional background color
+/// and border radius — produces the pill / rounded-widget look when enabled.
+fn pill_wrap<'a>(
+    elem: Element<'a, Message>,
+    radius: f32,
+    bg: Option<ThemeColor>,
+) -> Element<'a, Message> {
+    container(elem)
+        .style(move |_: &iced::Theme| iced::widget::container::Style {
+            background: bg.map(|c| iced::Background::Color(c.to_iced())),
+            border: iced::Border { radius: radius.into(), ..Default::default() },
+            ..Default::default()
+        })
+        .into()
+}
 
 fn position_to_anchor(pos: Position) -> Anchor {
     match pos {

@@ -1,15 +1,23 @@
 pub mod battery;
+pub mod brightness;
 pub mod clock;
 pub mod cpu;
+pub mod disk;
 pub mod memory;
 pub mod network;
+pub mod temperature;
 pub mod title;
+pub mod volume;
 pub mod workspace;
 
 pub use battery::BatteryWidget;
+pub use brightness::BrightnessWidget;
 pub use clock::ClockWidget;
 pub use cpu::CpuWidget;
+pub use disk::DiskWidget;
 pub use memory::MemoryWidget;
 pub use network::NetworkWidget;
+pub use temperature::TempWidget;
 pub use title::TitleWidget;
+pub use volume::VolumeWidget;
 pub use workspace::WorkspaceWidget;

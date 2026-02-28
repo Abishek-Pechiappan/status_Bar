@@ -44,15 +44,21 @@ pub struct GlobalConfig {
     pub exclusive_zone: bool,
     /// Overall background opacity (0.0 – 1.0).
     pub opacity: f32,
+    /// Horizontal gap between bar and screen edges in logical pixels (floating look).
+    pub margin: u32,
+    /// Vertical gap between bar and screen edge in logical pixels (floating look).
+    pub margin_top: u32,
 }
 
 impl Default for GlobalConfig {
     fn default() -> Self {
         Self {
-            height: 40,
-            position: Position::Top,
+            height:         40,
+            position:       Position::Top,
             exclusive_zone: true,
-            opacity: 0.95,
+            opacity:        0.95,
+            margin:         0,
+            margin_top:     0,
         }
     }
 }
@@ -117,6 +123,16 @@ pub struct ThemeConfig {
     pub padding: u16,
     /// Gap between widgets (pixels).
     pub gap: u16,
+    /// Widget container background color (hex).  Empty string = transparent.
+    pub widget_bg: String,
+    /// Bar border color (hex).  Empty string = no border.
+    pub border_color: String,
+    /// Bar border width in logical pixels (0 = no border).
+    pub border_width: u32,
+    /// `strftime`-style time format string (default: `"%H:%M"`).
+    pub clock_format: String,
+    /// `strftime`-style date format string (default: `"%a %d %b"`).
+    pub date_format: String,
 }
 
 impl Default for ThemeConfig {
@@ -130,6 +146,11 @@ impl Default for ThemeConfig {
             border_radius: 6.0,
             padding:       8,
             gap:           4,
+            widget_bg:    String::new(), // transparent by default
+            border_color: String::new(), // no border by default
+            border_width: 0,
+            clock_format: "%H:%M".to_string(),
+            date_format:  "%a %d %b".to_string(),
         }
     }
 }

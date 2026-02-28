@@ -20,6 +20,16 @@ pub struct Theme {
     pub border_radius: f32,
     pub padding:       u16,
     pub gap:           u16,
+    /// Widget container background.  `None` = transparent (no per-widget bg).
+    pub widget_bg:     Option<Color>,
+    /// Bar border color (used when `border_width > 0`).
+    pub border_color:  Color,
+    /// Bar border width in logical pixels.
+    pub border_width:  u32,
+    /// `strftime` format string for the clock time display.
+    pub clock_format:  String,
+    /// `strftime` format string for the clock date display.
+    pub date_format:   String,
 }
 
 impl Theme {
@@ -33,6 +43,15 @@ impl Theme {
             border_radius: cfg.border_radius,
             padding:       cfg.padding,
             gap:           cfg.gap,
+            widget_bg: if cfg.widget_bg.is_empty() {
+                None
+            } else {
+                Color::from_hex(&cfg.widget_bg)
+            },
+            border_color: Color::from_hex(&cfg.border_color).unwrap_or(Color::DARK),
+            border_width: cfg.border_width,
+            clock_format: cfg.clock_format.clone(),
+            date_format:  cfg.date_format.clone(),
         }
     }
 }

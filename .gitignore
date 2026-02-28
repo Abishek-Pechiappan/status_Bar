@@ -1,5 +1,30 @@
+# ── Build output ──────────────────────────────────────────────────────────────
 /target
-Cargo.lock
+
+# ── Claude Code project files ─────────────────────────────────────────────────
+.claude/
+
+# ── Environment / secrets ────────────────────────────────────────────────────
+.env
+.env.*
+
+# ── Editor swap / backup files ────────────────────────────────────────────────
 *.swp
 *.swo
+*~
+*.orig
+
+# ── OS-generated junk ────────────────────────────────────────────────────────
 .DS_Store
+Thumbs.db
+
+# ── Rust-specific ─────────────────────────────────────────────────────────────
+**/*.rs.bk    # rustfmt backups
+
+# ── IDE / editor project files ────────────────────────────────────────────────
+.idea/
+.vscode/
+*.iml
+
+# ── Distribution / packaging ─────────────────────────────────────────────────
+dist/

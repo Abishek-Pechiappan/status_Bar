@@ -8,6 +8,7 @@ members = [
     "crates/widgets",
     "crates/renderer",
     "crates/wayland",
+    "crates/editor",
 ]
 resolver = "2"
 
