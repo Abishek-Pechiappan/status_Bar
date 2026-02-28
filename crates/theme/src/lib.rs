@@ -34,8 +34,6 @@ pub struct Theme {
     pub use_nerd_icons: bool,
     /// Horizontal inner padding applied inside each widget pill container.
     pub widget_pad_x:  u16,
-    /// Vertical inner padding applied inside each widget pill container.
-    pub widget_pad_y:  u16,
 }
 
 impl Theme {
@@ -60,7 +58,6 @@ impl Theme {
             date_format:    cfg.date_format.clone(),
             use_nerd_icons: cfg.icon_style.to_lowercase() != "ascii",
             widget_pad_x:   cfg.widget_padding_x,
-            widget_pad_y:   cfg.widget_padding_y,
         }
     }
 }

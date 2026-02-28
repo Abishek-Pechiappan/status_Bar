@@ -1,6 +1,6 @@
 use bar_config::{default_path, load as load_config, BarConfig, Position, WidgetConfig};
 use iced::{
-    widget::{button, checkbox, column, container, pick_list, row, rule, scrollable, slider, text, text_input},
+    widget::{button, checkbox, column, container, mouse_area, pick_list, row, rule, scrollable, slider, text, text_input},
     Alignment, Color, Element, Length, Size, Subscription, Task,
 };
 use std::path::PathBuf;
@@ -24,16 +24,7 @@ fn main() -> iced::Result {
         .run()
 }
 
-// ── Shape presets ─────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ShapePreset {
-    Pill,
-    Rounded,
-    Sharp,
-}
-
-// ── Color field identifiers (for the inline HSL picker) ───────────────────────
+// ── Color field identifiers (for the colour picker) ───────────────────────────
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ColorField {
@@ -140,11 +131,8 @@ struct Editor {
     border_color_buf:    String,
     clock_format_buf:    String,
     date_format_buf:     String,
-    // Inline HSL color picker state
+    // Colour picker — which field's grid is open
     active_picker:       Option<ColorField>,
-    picker_h:            f32,   // hue 0 – 360
-    picker_s:            f32,   // saturation 0 – 1
-    picker_l:            f32,   // lightness 0 – 1
 }
 
 // ── Messages ──────────────────────────────────────────────────────────────────
@@ -177,7 +165,6 @@ enum Message {
     RadiusChanged(f32),
     PaddingChanged(f32),
     GapChanged(f32),
-    ShapePreset(ShapePreset),
     WidgetBgChanged(String),
     BorderColorChanged(String),
     BorderWidthChanged(f32),
@@ -185,12 +172,9 @@ enum Message {
     DateFormatChanged(String),
     UseNerdIcons(bool),
     WidgetPadXChanged(f32),
-    WidgetPadYChanged(f32),
-    // Color picker
+    // Colour picker
     TogglePicker(ColorField),
-    PickerHue(f32),
-    PickerSat(f32),
-    PickerLit(f32),
+    ColorGridPicked(String),
     ApplyThemePreset(usize),
     ResetDefaults,
 
@@ -238,9 +222,6 @@ impl Editor {
                 clock_format_buf,
                 date_format_buf,
                 active_picker: None,
-                picker_h:      0.0,
-                picker_s:      0.5,
-                picker_l:      0.5,
             },
             Task::none(),
         )
@@ -289,33 +270,6 @@ impl Editor {
         self.clock_format_buf = self.config.theme.clock_format.clone();
         self.date_format_buf  = self.config.theme.date_format.clone();
         self.active_picker    = None; // close picker when presets/reset are applied
-    }
-
-    fn apply_picker_color(&mut self) {
-        let hex = hsl_to_hex(self.picker_h, self.picker_s, self.picker_l);
-        match self.active_picker {
-            Some(ColorField::Background) => {
-                self.bg_buf = hex.clone();
-                self.config.theme.background = hex;
-            }
-            Some(ColorField::Foreground) => {
-                self.fg_buf = hex.clone();
-                self.config.theme.foreground = hex;
-            }
-            Some(ColorField::Accent) => {
-                self.accent_buf = hex.clone();
-                self.config.theme.accent = hex;
-            }
-            Some(ColorField::WidgetBg) => {
-                self.widget_bg_buf = hex.clone();
-                self.config.theme.widget_bg = hex;
-            }
-            Some(ColorField::BorderColor) => {
-                self.border_color_buf = hex.clone();
-                self.config.theme.border_color = hex;
-            }
-            None => {}
-        }
     }
 }
 
@@ -387,13 +341,6 @@ impl Editor {
             Message::PaddingChanged(v)      => self.config.theme.padding       = v as u16,
             Message::GapChanged(v)          => self.config.theme.gap           = v as u16,
 
-            Message::ShapePreset(p) => {
-                self.config.theme.border_radius = match p {
-                    ShapePreset::Pill    => self.config.global.height as f32 / 2.0,
-                    ShapePreset::Rounded => 8.0,
-                    ShapePreset::Sharp   => 0.0,
-                };
-            }
             Message::WidgetBgChanged(s) => {
                 self.widget_bg_buf = s.clone();
                 self.config.theme.widget_bg = s;
@@ -419,35 +366,40 @@ impl Editor {
                 self.config.theme.icon_style = if b { "nerd".to_string() } else { "ascii".to_string() };
             }
             Message::WidgetPadXChanged(v) => self.config.theme.widget_padding_x = v as u16,
-            Message::WidgetPadYChanged(v) => self.config.theme.widget_padding_y = v as u16,
 
-            // ── Color picker ─────────────────────────────────────────────────
+            // ── Colour picker ────────────────────────────────────────────────
             Message::TogglePicker(field) => {
                 if self.active_picker == Some(field) {
                     self.active_picker = None;
                 } else {
-                    let hex = match field {
-                        ColorField::Background  => self.config.theme.background.clone(),
-                        ColorField::Foreground  => self.config.theme.foreground.clone(),
-                        ColorField::Accent      => self.config.theme.accent.clone(),
-                        ColorField::WidgetBg    => self.config.theme.widget_bg.clone(),
-                        ColorField::BorderColor => self.config.theme.border_color.clone(),
-                    };
-                    if let Some((h, s, l)) = hex_to_hsl(&hex) {
-                        self.picker_h = h;
-                        self.picker_s = s;
-                        self.picker_l = l;
-                    } else {
-                        self.picker_h = 220.0;
-                        self.picker_s = 0.7;
-                        self.picker_l = 0.5;
-                    }
                     self.active_picker = Some(field);
                 }
             }
-            Message::PickerHue(v) => { self.picker_h = v; self.apply_picker_color(); }
-            Message::PickerSat(v) => { self.picker_s = v; self.apply_picker_color(); }
-            Message::PickerLit(v) => { self.picker_l = v; self.apply_picker_color(); }
+            Message::ColorGridPicked(hex) => {
+                match self.active_picker {
+                    Some(ColorField::Background) => {
+                        self.bg_buf = hex.clone();
+                        self.config.theme.background = hex;
+                    }
+                    Some(ColorField::Foreground) => {
+                        self.fg_buf = hex.clone();
+                        self.config.theme.foreground = hex;
+                    }
+                    Some(ColorField::Accent) => {
+                        self.accent_buf = hex.clone();
+                        self.config.theme.accent = hex;
+                    }
+                    Some(ColorField::WidgetBg) => {
+                        self.widget_bg_buf = hex.clone();
+                        self.config.theme.widget_bg = hex;
+                    }
+                    Some(ColorField::BorderColor) => {
+                        self.border_color_buf = hex.clone();
+                        self.config.theme.border_color = hex;
+                    }
+                    None => {}
+                }
+            }
 
             Message::ApplyThemePreset(idx) => {
                 if let Some(p) = THEME_PRESETS.get(idx) {
@@ -727,24 +679,6 @@ impl Editor {
     fn view_theme(&self) -> Element<'_, Message> {
         let t = &self.config.theme;
 
-        // Detect current shape preset from border_radius value
-        let half_height = self.config.global.height as f32 / 2.0;
-        let current_shape = if (t.border_radius - half_height).abs() < 0.5 {
-            Some(ShapePreset::Pill)
-        } else if (t.border_radius - 8.0).abs() < 0.5 {
-            Some(ShapePreset::Rounded)
-        } else if t.border_radius == 0.0 {
-            Some(ShapePreset::Sharp)
-        } else {
-            None
-        };
-
-        let shape_btn = |label: &'static str, preset: ShapePreset| -> Element<'_, Message> {
-            let active = current_shape == Some(preset);
-            let btn = button(text(label).size(13.0)).on_press(Message::ShapePreset(preset));
-            if active { btn.style(iced::widget::button::primary).into() } else { btn.into() }
-        };
-
         let nerd_active = t.icon_style.to_lowercase() != "ascii";
         let icon_btn = |label: &'static str, use_nerd: bool| -> Element<'_, Message> {
             let active = nerd_active == use_nerd;
@@ -752,11 +686,8 @@ impl Editor {
             if active { btn.style(iced::widget::button::primary).into() } else { btn.into() }
         };
 
-        let ph = self.picker_h;
-        let ps = self.picker_s;
-        let pl = self.picker_l;
-        let picker_for = |field: ColorField| -> Option<(f32, f32, f32)> {
-            if self.active_picker == Some(field) { Some((ph, ps, pl)) } else { None }
+        let picker_for = |field: ColorField| -> bool {
+            self.active_picker == Some(field)
         };
 
         // Build theme preset buttons
@@ -776,16 +707,6 @@ impl Editor {
                 "Presets",
                 iced::widget::Row::from_vec(preset_btns).spacing(4).wrap(),
             ),
-            // ── Shape presets ─────────────────────────────────────────────────
-            labeled_row(
-                "Widget Shape",
-                row![
-                    shape_btn("Pill",    ShapePreset::Pill),
-                    shape_btn("Rounded", ShapePreset::Rounded),
-                    shape_btn("Sharp",   ShapePreset::Sharp),
-                ]
-                .spacing(4),
-            ),
             // ── Icon style ───────────────────────────────────────────────────
             labeled_row(
                 "Icons",
@@ -800,7 +721,7 @@ impl Editor {
             ),
             // ── Widget pill padding ──────────────────────────────────────────
             labeled_row(
-                "Pill Pad X",
+                "Pill Padding",
                 row![
                     slider(0.0f32..=32.0, t.widget_padding_x as f32, Message::WidgetPadXChanged)
                         .step(1.0f32)
@@ -810,21 +731,10 @@ impl Editor {
                 .spacing(8)
                 .align_y(Alignment::Center),
             ),
-            labeled_row(
-                "Pill Pad Y",
-                row![
-                    slider(0.0f32..=16.0, t.widget_padding_y as f32, Message::WidgetPadYChanged)
-                        .step(1.0f32)
-                        .width(200),
-                    text(format!("{} px", t.widget_padding_y)).width(60),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            ),
             // ── Colors ────────────────────────────────────────────────────────
             color_input("Background",  &self.bg_buf,        &t.background,   Message::BgChanged,
                 ColorField::Background, picker_for(ColorField::Background)),
-            color_input("Foreground",  &self.fg_buf,        &t.foreground,   Message::FgChanged,
+            color_input("Text Color",  &self.fg_buf,        &t.foreground,   Message::FgChanged,
                 ColorField::Foreground, picker_for(ColorField::Foreground)),
             color_input("Accent",      &self.accent_buf,    &t.accent,       Message::AccentChanged,
                 ColorField::Accent, picker_for(ColorField::Accent)),
@@ -966,7 +876,7 @@ fn color_input<'a>(
     config_val: &'a str,
     on_change: fn(String) -> Message,
     field: ColorField,
-    picker: Option<(f32, f32, f32)>,
+    picker_open: bool,
 ) -> Element<'a, Message> {
     let swatch_color = parse_hex(config_val).unwrap_or(Color::BLACK);
 
@@ -982,7 +892,7 @@ fn color_input<'a>(
     let valid = is_valid_hex(buf);
     let input = text_input("#rrggbb", buf).on_input(on_change).width(110);
 
-    let pick_icon = if picker.is_some() { "▲" } else { "▼" };
+    let pick_icon = if picker_open { "▲" } else { "▼" };
     let pick_btn = button(text(pick_icon).size(11.0))
         .on_press(Message::TogglePicker(field));
 
@@ -993,37 +903,11 @@ fn color_input<'a>(
             .align_y(Alignment::Center),
     );
 
-    if let Some((h, s, l)) = picker {
-        let preview_color = swatch_color;
-        let picker_content = column![
-            row![
-                text("H").width(14).size(12.0),
-                slider(0.0f32..=360.0, h, Message::PickerHue).step(1.0).width(185),
-                text(format!("{h:.0}°")).width(38).size(12.0),
-            ].spacing(4).align_y(Alignment::Center),
-            row![
-                text("S").width(14).size(12.0),
-                slider(0.0f32..=1.0, s, Message::PickerSat).step(0.01).width(185),
-                text(format!("{:.0}%", s * 100.0)).width(38).size(12.0),
-            ].spacing(4).align_y(Alignment::Center),
-            row![
-                text("L").width(14).size(12.0),
-                slider(0.0f32..=1.0, l, Message::PickerLit).step(0.01).width(185),
-                text(format!("{:.0}%", l * 100.0)).width(38).size(12.0),
-            ].spacing(4).align_y(Alignment::Center),
-            container(text(""))
-                .width(Length::Fixed(240.0))
-                .height(Length::Fixed(18.0))
-                .style(move |_: &iced::Theme| iced::widget::container::Style {
-                    background: Some(iced::Background::Color(preview_color)),
-                    border: iced::Border { radius: 4.0.into(), ..Default::default() },
-                    ..Default::default()
-                }),
-        ].spacing(4);
-        let picker_row = labeled_row("", picker_content);
+    if picker_open {
+        let grid_row = labeled_row("", color_grid());
         let mut col = iced::widget::Column::new().spacing(4);
         col = col.push(main_row);
-        col = col.push(picker_row);
+        col = col.push(grid_row);
         col.into()
     } else {
         main_row
@@ -1037,7 +921,7 @@ fn color_input_optional<'a>(
     config_val: &'a str,
     on_change: fn(String) -> Message,
     field: ColorField,
-    picker: Option<(f32, f32, f32)>,
+    picker_open: bool,
 ) -> Element<'a, Message> {
     let swatch_color = parse_hex(config_val).unwrap_or(Color::from_rgba8(0, 0, 0, 0.0));
 
@@ -1057,7 +941,7 @@ fn color_input_optional<'a>(
     let hint = if buf.is_empty() { "none" } else if is_valid_hex(buf) { "" } else { "invalid" };
     let input = text_input("#rrggbb or empty", buf).on_input(on_change).width(110);
 
-    let pick_icon = if picker.is_some() { "▲" } else { "▼" };
+    let pick_icon = if picker_open { "▲" } else { "▼" };
     let pick_btn = button(text(pick_icon).size(11.0))
         .on_press(Message::TogglePicker(field));
 
@@ -1068,41 +952,78 @@ fn color_input_optional<'a>(
             .align_y(Alignment::Center),
     );
 
-    if let Some((h, s, l)) = picker {
-        let preview_color = swatch_color;
-        let picker_content = column![
-            row![
-                text("H").width(14).size(12.0),
-                slider(0.0f32..=360.0, h, Message::PickerHue).step(1.0).width(185),
-                text(format!("{h:.0}°")).width(38).size(12.0),
-            ].spacing(4).align_y(Alignment::Center),
-            row![
-                text("S").width(14).size(12.0),
-                slider(0.0f32..=1.0, s, Message::PickerSat).step(0.01).width(185),
-                text(format!("{:.0}%", s * 100.0)).width(38).size(12.0),
-            ].spacing(4).align_y(Alignment::Center),
-            row![
-                text("L").width(14).size(12.0),
-                slider(0.0f32..=1.0, l, Message::PickerLit).step(0.01).width(185),
-                text(format!("{:.0}%", l * 100.0)).width(38).size(12.0),
-            ].spacing(4).align_y(Alignment::Center),
-            container(text(""))
-                .width(Length::Fixed(240.0))
-                .height(Length::Fixed(18.0))
-                .style(move |_: &iced::Theme| iced::widget::container::Style {
-                    background: Some(iced::Background::Color(preview_color)),
-                    border: iced::Border { radius: 4.0.into(), ..Default::default() },
-                    ..Default::default()
-                }),
-        ].spacing(4);
-        let picker_row = labeled_row("", picker_content);
+    if picker_open {
+        let grid_row = labeled_row("", color_grid());
         let mut col = iced::widget::Column::new().spacing(4);
         col = col.push(main_row);
-        col = col.push(picker_row);
+        col = col.push(grid_row);
         col.into()
     } else {
         main_row
     }
+}
+
+// ── Colour grid ───────────────────────────────────────────────────────────────
+
+/// 2-D HSV colour grid: 24 hue columns × 8 rows (7 colour rows + 1 grey row).
+/// Clicking a cell emits `Message::ColorGridPicked(hex)`.
+fn color_grid<'a>() -> Element<'a, Message> {
+    const HUES: usize = 24;
+    const HUE_STEP: f32 = 360.0 / HUES as f32;
+    const CELL: f32 = 14.0;
+    const GAP:  f32 = 2.0;
+
+    // (saturation, value) for each colour row
+    const SV_ROWS: &[(f32, f32)] = &[
+        (1.00, 1.00), // vivid, bright
+        (0.80, 0.95), // slightly softer
+        (1.00, 0.75), // darker vivid
+        (1.00, 0.55), // darker
+        (1.00, 0.35), // very dark
+        (0.40, 0.95), // pastel
+        (0.20, 0.70), // muted
+    ];
+
+    let make_cell = |hex: String| -> Element<'a, Message> {
+        let color = parse_hex(&hex).unwrap_or(Color::BLACK);
+        mouse_area(
+            container(text(""))
+                .width(Length::Fixed(CELL))
+                .height(Length::Fixed(CELL))
+                .style(move |_: &iced::Theme| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(color)),
+                    border: iced::Border { radius: 2.0.into(), ..Default::default() },
+                    ..Default::default()
+                }),
+        )
+        .on_press(Message::ColorGridPicked(hex))
+        .into()
+    };
+
+    let mut rows: Vec<Element<'a, Message>> = Vec::new();
+
+    // Colour rows
+    for &(s, v) in SV_ROWS {
+        let cells: Vec<Element<'a, Message>> = (0..HUES)
+            .map(|i| make_cell(hsv_to_hex(i as f32 * HUE_STEP, s, v)))
+            .collect();
+        rows.push(
+            iced::widget::Row::from_vec(cells).spacing(GAP).into()
+        );
+    }
+
+    // Grey row (white → black)
+    let grey_cells: Vec<Element<'a, Message>> = (0..HUES)
+        .map(|i| {
+            let v = 1.0 - (i as f32 / (HUES - 1) as f32) * 0.95;
+            make_cell(hsv_to_hex(0.0, 0.0, v))
+        })
+        .collect();
+    rows.push(
+        iced::widget::Row::from_vec(grey_cells).spacing(GAP).into()
+    );
+
+    iced::widget::Column::from_vec(rows).spacing(GAP).into()
 }
 
 // ── Pure helpers ──────────────────────────────────────────────────────────────
@@ -1123,57 +1044,30 @@ fn is_valid_hex(s: &str) -> bool {
     parse_hex(s).is_some()
 }
 
-/// Convert a `#rrggbb` hex string to HSL (H: 0–360, S: 0–1, L: 0–1).
-/// Returns `None` when the hex is invalid or empty.
-fn hex_to_hsl(hex: &str) -> Option<(f32, f32, f32)> {
-    let c = parse_hex(hex)?;
-    let (r, g, b) = (c.r, c.g, c.b);
-    let max = r.max(g).max(b);
-    let min = r.min(g).min(b);
-    let l = (max + min) / 2.0;
-
-    if (max - min).abs() < 1e-6 {
-        return Some((0.0, 0.0, l));
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
+    if s < 1e-6 {
+        let c = (v * 255.0).round() as u8;
+        return (c, c, c);
     }
-
-    let d = max - min;
-    let s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
-
-    let h = if (max - r).abs() < 1e-6 {
-        ((g - b) / d + if g < b { 6.0 } else { 0.0 }) / 6.0
-    } else if (max - g).abs() < 1e-6 {
-        ((b - r) / d + 2.0) / 6.0
-    } else {
-        ((r - g) / d + 4.0) / 6.0
+    let h6 = (h / 60.0).rem_euclid(6.0);
+    let i  = h6 as i32;
+    let f  = h6 - i as f32;
+    let p  = v * (1.0 - s);
+    let q  = v * (1.0 - f * s);
+    let t  = v * (1.0 - (1.0 - f) * s);
+    let (r, g, b) = match i {
+        0 => (v, t, p),
+        1 => (q, v, p),
+        2 => (p, v, t),
+        3 => (p, q, v),
+        4 => (t, p, v),
+        _ => (v, p, q),
     };
-
-    Some((h * 360.0, s, l))
+    ((r * 255.0).round() as u8, (g * 255.0).round() as u8, (b * 255.0).round() as u8)
 }
 
-/// Convert HSL (H: 0–360, S: 0–1, L: 0–1) to a `#rrggbb` hex string.
-fn hsl_to_hex(h: f32, s: f32, l: f32) -> String {
-    if s < 1e-6 {
-        let v = (l * 255.0).round() as u8;
-        return format!("#{v:02x}{v:02x}{v:02x}");
-    }
-
-    fn hue_to_rgb(p: f32, q: f32, mut t: f32) -> f32 {
-        if t < 0.0 { t += 1.0; }
-        if t > 1.0 { t -= 1.0; }
-        if t < 1.0 / 6.0 { return p + (q - p) * 6.0 * t; }
-        if t < 0.5 { return q; }
-        if t < 2.0 / 3.0 { return p + (q - p) * (2.0 / 3.0 - t) * 6.0; }
-        p
-    }
-
-    let hn = h / 360.0;
-    let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
-    let p = 2.0 * l - q;
-
-    let r = (hue_to_rgb(p, q, hn + 1.0 / 3.0) * 255.0).round() as u8;
-    let g = (hue_to_rgb(p, q, hn) * 255.0).round() as u8;
-    let b = (hue_to_rgb(p, q, hn - 1.0 / 3.0) * 255.0).round() as u8;
-
+fn hsv_to_hex(h: f32, s: f32, v: f32) -> String {
+    let (r, g, b) = hsv_to_rgb(h, s, v);
     format!("#{r:02x}{g:02x}{b:02x}")
 }
 

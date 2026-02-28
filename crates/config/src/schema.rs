@@ -142,8 +142,6 @@ pub struct ThemeConfig {
     pub icon_style: String,
     /// Horizontal inner padding for each widget pill container (pixels).
     pub widget_padding_x: u16,
-    /// Vertical inner padding for each widget pill container (pixels).
-    pub widget_padding_y: u16,
 }
 
 impl Default for ThemeConfig {
@@ -164,7 +162,6 @@ impl Default for ThemeConfig {
             date_format:     "%a %d %b".to_string(),
             icon_style:      "nerd".to_string(),
             widget_padding_x: 8,
-            widget_padding_y: 2,
         }
     }
 }
