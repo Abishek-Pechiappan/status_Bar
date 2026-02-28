@@ -30,6 +30,12 @@ pub struct Theme {
     pub clock_format:  String,
     /// `strftime` format string for the clock date display.
     pub date_format:   String,
+    /// When `true`, widgets render Nerd Font glyphs.  `false` → ASCII labels.
+    pub use_nerd_icons: bool,
+    /// Horizontal inner padding applied inside each widget pill container.
+    pub widget_pad_x:  u16,
+    /// Vertical inner padding applied inside each widget pill container.
+    pub widget_pad_y:  u16,
 }
 
 impl Theme {
@@ -50,8 +56,11 @@ impl Theme {
             },
             border_color: Color::from_hex(&cfg.border_color).unwrap_or(Color::DARK),
             border_width: cfg.border_width,
-            clock_format: cfg.clock_format.clone(),
-            date_format:  cfg.date_format.clone(),
+            clock_format:   cfg.clock_format.clone(),
+            date_format:    cfg.date_format.clone(),
+            use_nerd_icons: cfg.icon_style.to_lowercase() != "ascii",
+            widget_pad_x:   cfg.widget_padding_x,
+            widget_pad_y:   cfg.widget_padding_y,
         }
     }
 }

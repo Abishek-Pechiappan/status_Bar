@@ -17,7 +17,8 @@ impl MemoryWidget {
         let total   = format_bytes(state.system.ram_total);
         let percent = (state.system.ram_fraction() * 100.0) as u8;
 
-        let label = format!(" {used}/{total}  {percent}%");
+        let icon = if theme.use_nerd_icons { "" } else { "RAM" };
+        let label = format!("{icon} {used}/{total}  {percent}%");
 
         row![
             text(label).size(theme.font_size),

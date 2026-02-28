@@ -12,7 +12,8 @@ impl UptimeWidget {
     }
 
     pub fn view<'a>(&'a self, state: &'a AppState, theme: &'a Theme) -> Element<'a, Message> {
-        text(format!("󰔛 {}", fmt_uptime(state.system.uptime_secs)))
+        let icon = if theme.use_nerd_icons { "󰔛" } else { "UP" };
+        text(format!("{icon} {}", fmt_uptime(state.system.uptime_secs)))
             .size(theme.font_size)
             .into()
     }

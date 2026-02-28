@@ -167,6 +167,9 @@ enum Message {
     BorderWidthChanged(f32),
     ClockFormatChanged(String),
     DateFormatChanged(String),
+    UseNerdIcons(bool),
+    WidgetPadXChanged(f32),
+    WidgetPadYChanged(f32),
     ApplyThemePreset(usize),
     ResetDefaults,
 
@@ -358,6 +361,12 @@ impl Editor {
                 self.date_format_buf = s.clone();
                 self.config.theme.date_format = s;
             }
+
+            Message::UseNerdIcons(b) => {
+                self.config.theme.icon_style = if b { "nerd".to_string() } else { "ascii".to_string() };
+            }
+            Message::WidgetPadXChanged(v) => self.config.theme.widget_padding_x = v as u16,
+            Message::WidgetPadYChanged(v) => self.config.theme.widget_padding_y = v as u16,
 
             Message::ApplyThemePreset(idx) => {
                 if let Some(p) = THEME_PRESETS.get(idx) {
@@ -655,6 +664,13 @@ impl Editor {
             if active { btn.style(iced::widget::button::primary).into() } else { btn.into() }
         };
 
+        let nerd_active = t.icon_style.to_lowercase() != "ascii";
+        let icon_btn = |label: &'static str, use_nerd: bool| -> Element<'_, Message> {
+            let active = nerd_active == use_nerd;
+            let btn = button(text(label).size(13.0)).on_press(Message::UseNerdIcons(use_nerd));
+            if active { btn.style(iced::widget::button::primary).into() } else { btn.into() }
+        };
+
         // Build theme preset buttons
         let preset_btns: Vec<Element<'_, Message>> = THEME_PRESETS
             .iter()
@@ -681,6 +697,41 @@ impl Editor {
                     shape_btn("Sharp",   ShapePreset::Sharp),
                 ]
                 .spacing(4),
+            ),
+            // ── Icon style ───────────────────────────────────────────────────
+            labeled_row(
+                "Icons",
+                row![
+                    icon_btn("Nerd Font", true),
+                    icon_btn("ASCII", false),
+                    text("Use ASCII if icons show as \"?\"").size(11.0)
+                        .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+                ]
+                .spacing(4)
+                .align_y(Alignment::Center),
+            ),
+            // ── Widget pill padding ──────────────────────────────────────────
+            labeled_row(
+                "Pill Pad X",
+                row![
+                    slider(0.0f32..=32.0, t.widget_padding_x as f32, Message::WidgetPadXChanged)
+                        .step(1.0f32)
+                        .width(200),
+                    text(format!("{} px", t.widget_padding_x)).width(60),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            ),
+            labeled_row(
+                "Pill Pad Y",
+                row![
+                    slider(0.0f32..=16.0, t.widget_padding_y as f32, Message::WidgetPadYChanged)
+                        .step(1.0f32)
+                        .width(200),
+                    text(format!("{} px", t.widget_padding_y)).width(60),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
             ),
             // ── Colors ────────────────────────────────────────────────────────
             color_input("Background",    &self.bg_buf,           &t.background,   Message::BgChanged),

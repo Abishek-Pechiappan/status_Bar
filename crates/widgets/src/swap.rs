@@ -25,6 +25,7 @@ impl SwapWidget {
         }
         let used  = format_bytes(state.system.swap_used);
         let total = format_bytes(state.system.swap_total);
-        Some(text(format!("󰓡 {used}/{total}")).size(theme.font_size).into())
+        let icon = if theme.use_nerd_icons { "󰓡" } else { "SWP" };
+        Some(text(format!("{icon} {used}/{total}")).size(theme.font_size).into())
     }
 }

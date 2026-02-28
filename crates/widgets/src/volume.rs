@@ -26,13 +26,11 @@ impl VolumeWidget {
         let vol = state.system.volume?;
 
         let icon = if state.system.volume_muted {
-            "󰝟"
-        } else if vol < 0.33 {
-            "󰕿"
-        } else if vol < 0.66 {
-            "󰖀"
+            if theme.use_nerd_icons { "󰝟" } else { "[M]" }
+        } else if theme.use_nerd_icons {
+            if vol < 0.33 { "󰕿" } else if vol < 0.66 { "󰖀" } else { "󰕾" }
         } else {
-            "󰕾"
+            "VOL"
         };
 
         let pct   = (vol * 100.0).round() as u32;

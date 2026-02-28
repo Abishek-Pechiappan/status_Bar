@@ -366,12 +366,14 @@ impl Bar {
         let pad    = self.theme.padding;
         let radius = self.theme.border_radius;
         let wbg    = self.theme.widget_bg;
+        let pad_x  = self.theme.widget_pad_x;
+        let pad_y  = self.theme.widget_pad_y;
 
         let left_items: Vec<Element<'_, Message>> = self.config.left
             .iter()
             .filter_map(|w| {
                 self.render_widget(&w.kind)
-                    .map(|e| pill_wrap(e.map(Message::App), radius, wbg))
+                    .map(|e| pill_wrap(e.map(Message::App), radius, wbg, pad_x, pad_y))
             })
             .collect();
         let left = iced::widget::Row::from_vec(left_items)
@@ -382,7 +384,7 @@ impl Bar {
             .iter()
             .filter_map(|w| {
                 self.render_widget(&w.kind)
-                    .map(|e| pill_wrap(e.map(Message::App), radius, wbg))
+                    .map(|e| pill_wrap(e.map(Message::App), radius, wbg, pad_x, pad_y))
             })
             .collect();
         let center = iced::widget::Row::from_vec(center_items)
@@ -393,7 +395,7 @@ impl Bar {
             .iter()
             .filter_map(|w| {
                 self.render_widget(&w.kind)
-                    .map(|e| pill_wrap(e.map(Message::App), radius, wbg))
+                    .map(|e| pill_wrap(e.map(Message::App), radius, wbg, pad_x, pad_y))
             })
             .collect();
         let right = iced::widget::Row::from_vec(right_items)
@@ -534,8 +536,11 @@ fn pill_wrap<'a>(
     elem: Element<'a, Message>,
     radius: f32,
     bg: Option<ThemeColor>,
+    pad_x: u16,
+    pad_y: u16,
 ) -> Element<'a, Message> {
     container(elem)
+        .padding([pad_y as f32, pad_x as f32])
         .style(move |_: &iced::Theme| iced::widget::container::Style {
             background: bg.map(|c| iced::Background::Color(c.to_iced())),
             border: iced::Border { radius: radius.into(), ..Default::default() },

@@ -24,7 +24,8 @@ impl BrightnessWidget {
         theme: &'a Theme,
     ) -> Option<Element<'a, Message>> {
         let pct = state.system.brightness?;
-        let content = text(format!("󰃞 {pct}%")).size(theme.font_size);
+        let icon = if theme.use_nerd_icons { "󰃞" } else { "BRT" };
+        let content = text(format!("{icon} {pct}%")).size(theme.font_size);
 
         Some(
             mouse_area(content)

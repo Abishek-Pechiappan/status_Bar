@@ -12,7 +12,8 @@ impl CpuWidget {
     }
 
     pub fn view<'a>(&'a self, state: &'a AppState, theme: &'a Theme) -> Element<'a, Message> {
-        text(format!(" {:.0}%", state.system.cpu_average))
+        let icon = if theme.use_nerd_icons { "" } else { "CPU" };
+        text(format!("{icon} {:.0}%", state.system.cpu_average))
             .size(theme.font_size)
             .into()
     }

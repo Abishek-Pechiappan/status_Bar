@@ -30,8 +30,9 @@ impl DiskWidget {
         let total = format_bytes(state.system.disk_total);
         let pct   = state.system.disk_fraction() * 100.0;
 
+        let icon = if theme.use_nerd_icons { "󰋊" } else { "DSK" };
         Some(
-            row![text(format!("󰋊 {used}/{total} ({pct:.0}%)")).size(theme.font_size)]
+            row![text(format!("{icon} {used}/{total} ({pct:.0}%)")).size(theme.font_size)]
                 .align_y(Alignment::Center)
                 .into(),
         )

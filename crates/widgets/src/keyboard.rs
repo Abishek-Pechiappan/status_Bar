@@ -27,7 +27,8 @@ impl KeyboardWidget {
         if state.keyboard_layout.is_empty() {
             return None;
         }
-        let content = text(format!("󰌌 {}", state.keyboard_layout)).size(theme.font_size);
+        let icon = if theme.use_nerd_icons { "󰌌" } else { "KB" };
+        let content = text(format!("{icon} {}", state.keyboard_layout)).size(theme.font_size);
 
         Some(
             mouse_area(content)

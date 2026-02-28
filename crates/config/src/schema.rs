@@ -137,24 +137,34 @@ pub struct ThemeConfig {
     pub clock_format: String,
     /// `strftime`-style date format string (default: `"%a %d %b"`).
     pub date_format: String,
+    /// Icon style: `"nerd"` uses Nerd Font glyphs; `"ascii"` uses plain text labels.
+    /// Use `"ascii"` if your terminal / font shows question marks for icons.
+    pub icon_style: String,
+    /// Horizontal inner padding for each widget pill container (pixels).
+    pub widget_padding_x: u16,
+    /// Vertical inner padding for each widget pill container (pixels).
+    pub widget_padding_y: u16,
 }
 
 impl Default for ThemeConfig {
     fn default() -> Self {
         Self {
-            background:    "#1e1e2e".to_string(), // Catppuccin Mocha — base
-            foreground:    "#cdd6f4".to_string(), // Catppuccin Mocha — text
-            accent:        "#cba6f7".to_string(), // Catppuccin Mocha — mauve
-            font:          "JetBrains Mono".to_string(),
-            font_size:     13.0,
-            border_radius: 6.0,
-            padding:       8,
-            gap:           4,
-            widget_bg:    String::new(), // transparent by default
-            border_color: String::new(), // no border by default
-            border_width: 0,
-            clock_format: "%H:%M".to_string(),
-            date_format:  "%a %d %b".to_string(),
+            background:      "#1e1e2e".to_string(), // Catppuccin Mocha — base
+            foreground:      "#cdd6f4".to_string(), // Catppuccin Mocha — text
+            accent:          "#cba6f7".to_string(), // Catppuccin Mocha — mauve
+            font:            "JetBrains Mono".to_string(),
+            font_size:       13.0,
+            border_radius:   6.0,
+            padding:         8,
+            gap:             4,
+            widget_bg:       String::new(), // transparent by default
+            border_color:    String::new(), // no border by default
+            border_width:    0,
+            clock_format:    "%H:%M".to_string(),
+            date_format:     "%a %d %b".to_string(),
+            icon_style:      "nerd".to_string(),
+            widget_padding_x: 8,
+            widget_padding_y: 2,
         }
     }
 }

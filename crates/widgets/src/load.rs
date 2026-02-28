@@ -15,7 +15,8 @@ impl LoadWidget {
         let l1  = state.system.load_1;
         let l5  = state.system.load_5;
         let l15 = state.system.load_15;
-        text(format!(" {l1:.2} {l5:.2} {l15:.2}"))
+        let icon = if theme.use_nerd_icons { "" } else { "LD" };
+        text(format!("{icon} {l1:.2} {l5:.2} {l15:.2}"))
             .size(theme.font_size)
             .into()
     }
