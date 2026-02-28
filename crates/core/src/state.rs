@@ -1,6 +1,15 @@
 use chrono::{DateTime, Local};
 use serde::{Deserialize, Serialize};
 
+/// A single received notification entry (from D-Bus `org.freedesktop.Notifications`).
+#[derive(Debug, Clone)]
+pub struct NotifEntry {
+    pub id: u32,
+    pub app_name: String,
+    pub summary: String,
+    pub body: String,
+}
+
 /// Central application state — all widgets read from this snapshot.
 #[derive(Debug, Clone)]
 pub struct AppState {
@@ -18,6 +27,10 @@ pub struct AppState {
     pub system: SystemSnapshot,
     /// Current local time (updated every second).
     pub time: DateTime<Local>,
+    /// Received notifications (newest last).  Capped at 50 entries.
+    pub notifications: Vec<NotifEntry>,
+    /// Whether the notification panel is currently expanded.
+    pub notify_panel_open: bool,
 }
 
 impl Default for AppState {
@@ -30,6 +43,8 @@ impl Default for AppState {
             keyboard_layout: String::new(),
             system: SystemSnapshot::default(),
             time: Local::now(),
+            notifications: Vec::new(),
+            notify_panel_open: false,
         }
     }
 }

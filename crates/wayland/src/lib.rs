@@ -4,24 +4,26 @@
 //! - Hyprland IPC event stream (workspaces, active window, fullscreen, keyboard layout)
 //! - System resource monitor (CPU, RAM, disk, media, etc.)
 //! - Config file watcher (live reload on change)
+//! - D-Bus notification daemon (`org.freedesktop.Notifications`)
 //! - 1-second timer (clock)
 
 use bar_config::{default_path, load as load_config, BarConfig, ConfigWatcher, Position};
 use bar_core::{
     event::Message as AppMessage,
-    state::{AppState, WorkspaceInfo},
+    state::{AppState, NotifEntry, WorkspaceInfo},
 };
 use bar_ipc::{fetch_active_window, fetch_workspaces, HyprlandEvent, HyprlandIpc};
 use bar_theme::{Color as ThemeColor, Theme};
 use bar_widgets::{
     BatteryWidget, BrightnessWidget, ClockWidget, CpuWidget, CustomWidget, DiskWidget,
-    KeyboardWidget, LoadWidget, MediaWidget, MemoryWidget, NetworkWidget, SeparatorWidget,
-    SwapWidget, TempWidget, TitleWidget, UptimeWidget, VolumeWidget, WorkspaceWidget,
+    KeyboardWidget, LoadWidget, MediaWidget, MemoryWidget, NetworkWidget, NotifyWidget,
+    SeparatorWidget, SwapWidget, TempWidget, TitleWidget, UptimeWidget, VolumeWidget,
+    WorkspaceWidget,
 };
 use chrono::Local;
 use futures::channel::mpsc::Sender;
 use iced::{
-    widget::{container, row},
+    widget::{column, container, row},
     Element, Length, Subscription, Task,
 };
 use iced_layershell::{
@@ -37,9 +39,10 @@ use tracing::{error, info, warn};
 /// System monitor poll interval (milliseconds).
 const SYSTEM_INTERVAL_MS: u64 = 2_000;
 
+/// Height of the notification panel that drops below the bar (pixels).
+const NOTIFY_PANEL_HEIGHT: u32 = 300;
+
 /// Custom shell command set once from config at startup.
-/// Shared with the system monitor subscription (which is a free function and
-/// cannot receive parameters directly).
 static CUSTOM_CMD: OnceLock<String> = OnceLock::new();
 
 // ── Entry point ───────────────────────────────────────────────────────────────
@@ -61,7 +64,6 @@ pub fn run() -> iced_layershell::Result {
         0
     };
 
-    // Initialise custom command before the app starts so system_stream can read it.
     let _ = CUSTOM_CMD.set(config.global.custom_command.clone());
 
     application(Bar::new, Bar::namespace, Bar::update, Bar::view)
@@ -115,6 +117,7 @@ struct Bar {
     media:      MediaWidget,
     custom:     CustomWidget,
     separator:  SeparatorWidget,
+    notify:     NotifyWidget,
 }
 
 impl Bar {
@@ -144,6 +147,7 @@ impl Bar {
             media:      MediaWidget::new(),
             custom:     CustomWidget::new(),
             separator:  SeparatorWidget::new(),
+            notify:     NotifyWidget::new(),
         };
 
         let init_task = Task::perform(
@@ -215,6 +219,36 @@ impl Bar {
                         self.config = cfg;
                     }
                     Err(e) => warn!("Config reload failed: {e}"),
+                }
+            }
+
+            // ── Notifications ─────────────────────────────────────────────────
+            AppMessage::NotificationReceived { id, app_name, summary, body } => {
+                // Replace an existing entry with the same id (replaces_id flow).
+                self.state.notifications.retain(|n| n.id != id);
+                self.state.notifications.push(NotifEntry { id, app_name, summary, body });
+                // Cap history at 50 entries (drop oldest).
+                if self.state.notifications.len() > 50 {
+                    self.state.notifications.remove(0);
+                }
+            }
+            AppMessage::NotificationClosed(id) => {
+                self.state.notifications.retain(|n| n.id != id);
+                return self.maybe_close_panel();
+            }
+            AppMessage::NotifyPanelToggle => {
+                self.state.notify_panel_open = !self.state.notify_panel_open;
+                return self.sync_surface_size();
+            }
+            AppMessage::NotifyDismiss(id) => {
+                self.state.notifications.retain(|n| n.id != id);
+                return self.maybe_close_panel();
+            }
+            AppMessage::NotifyClearAll => {
+                self.state.notifications.clear();
+                if self.state.notify_panel_open {
+                    self.state.notify_panel_open = false;
+                    return self.sync_surface_size();
                 }
             }
 
@@ -347,6 +381,7 @@ impl Bar {
             "network"     => Some(self.network.view(&self.state, &self.theme)),
             "uptime"      => Some(self.uptime.view(&self.state, &self.theme)),
             "load"        => Some(self.load.view(&self.state, &self.theme)),
+            "notify"      => Some(self.notify.view(&self.state, &self.theme)),
             "battery"     => self.battery.view(&self.state, &self.theme),
             "disk"        => self.disk.view(&self.state, &self.theme),
             "temperature" => self.temp.view(&self.state, &self.theme),
@@ -405,7 +440,6 @@ impl Bar {
             .spacing(gap)
             .align_y(iced::Alignment::Center);
 
-        // Use horizontal-only padding so widgets vertically centre in the bar.
         let hpad = [0.0f32, pad as f32];
 
         let bar = row![
@@ -430,10 +464,11 @@ impl Bar {
 
         let border_color = self.theme.border_color.to_iced();
         let border_width = self.theme.border_width as f32;
+        let bar_h        = self.config.global.height as f32;
 
-        container(bar)
+        let bar_outer: Element<'_, Message> = container(bar)
             .width(Length::Fill)
-            .height(Length::Fill)
+            .height(Length::Fixed(bar_h))
             .style(move |_: &iced::Theme| iced::widget::container::Style {
                 border: iced::Border {
                     color: border_color,
@@ -442,7 +477,109 @@ impl Bar {
                 },
                 ..Default::default()
             })
+            .into();
+
+        if self.state.notify_panel_open {
+            column![bar_outer, self.view_notify_panel()]
+                .width(Length::Fill)
+                .into()
+        } else {
+            bar_outer
+        }
+    }
+
+    fn view_notify_panel(&self) -> Element<'_, Message> {
+        let font_size  = self.theme.font_size;
+        let bg_iced    = self.theme.background.with_alpha(0.97).to_iced();
+        let fg_iced    = self.theme.foreground.to_iced();
+        let dim_iced   = self.theme.foreground.with_alpha(0.55).to_iced();
+        let accent_iced = self.theme.accent.to_iced();
+
+        // ── Header row ───────────────────────────────────────────────────────
+        let header = row![
+            iced::widget::text("Notifications")
+                .size(font_size)
+                .color(fg_iced),
+            iced::widget::Space::new().width(Length::Fill),
+            iced::widget::button(
+                iced::widget::text("Clear all").size(font_size - 2.0)
+            )
+            .on_press(Message::App(AppMessage::NotifyClearAll))
+            .style(iced::widget::button::text),
+        ]
+        .align_y(iced::Alignment::Center)
+        .padding([6.0, 12.0]);
+
+        // ── Notification entries ──────────────────────────────────────────────
+        let body: Element<'_, Message> = if self.state.notifications.is_empty() {
+            container(
+                iced::widget::text("No notifications")
+                    .size(font_size)
+                    .color(dim_iced),
+            )
+            .padding([16.0, 12.0])
+            .width(Length::Fill)
             .into()
+        } else {
+            let items: Vec<Element<'_, Message>> = self.state.notifications
+                .iter()
+                .rev()
+                .map(|n| {
+                    let id = n.id;
+                    let body_line: Element<'_, Message> = if n.body.is_empty() {
+                        iced::widget::Space::new().height(0.0).into()
+                    } else {
+                        iced::widget::text(n.body.as_str())
+                            .size(font_size - 2.0)
+                            .color(dim_iced)
+                            .into()
+                    };
+
+                    row![
+                        iced::widget::column![
+                            iced::widget::text(n.app_name.as_str())
+                                .size(font_size - 2.0)
+                                .color(accent_iced),
+                            iced::widget::text(n.summary.as_str())
+                                .size(font_size),
+                            body_line,
+                        ]
+                        .spacing(2.0)
+                        .width(Length::Fill),
+                        iced::widget::button(
+                            iced::widget::text("×").size(font_size)
+                        )
+                        .on_press(Message::App(AppMessage::NotifyDismiss(id)))
+                        .style(iced::widget::button::text),
+                    ]
+                    .align_y(iced::Alignment::Start)
+                    .padding([6.0, 12.0])
+                    .into()
+                })
+                .collect();
+
+            iced::widget::scrollable(
+                iced::widget::Column::from_vec(items).spacing(1.0).width(Length::Fill),
+            )
+            .height(Length::Fill)
+            .into()
+        };
+
+        container(
+            column![
+                header,
+                iced::widget::rule::horizontal(1),
+                body,
+            ]
+            .width(Length::Fill),
+        )
+        .width(Length::Fill)
+        .height(Length::Fixed(NOTIFY_PANEL_HEIGHT as f32))
+        .style(move |_: &iced::Theme| iced::widget::container::Style {
+            background: Some(iced::Background::Color(bg_iced)),
+            ..Default::default()
+        })
+        .into()
     }
 
     // ── Subscriptions ─────────────────────────────────────────────────────────
@@ -455,6 +592,7 @@ impl Bar {
             Subscription::run(ipc_stream),
             Subscription::run(system_stream),
             Subscription::run(config_stream),
+            Subscription::run(notify_stream),
         ])
     }
 
@@ -466,6 +604,28 @@ impl Bar {
             background_color: bg.to_iced(),
             text_color: self.theme.foreground.to_iced(),
         }
+    }
+
+    // ── Panel helpers ─────────────────────────────────────────────────────────
+
+    /// Resize the layer-shell surface to match whether the panel is open.
+    fn sync_surface_size(&self) -> Task<Message> {
+        let bar_h   = self.config.global.height;
+        let total_h = if self.state.notify_panel_open {
+            bar_h + NOTIFY_PANEL_HEIGHT
+        } else {
+            bar_h
+        };
+        Task::done(Message::SizeChange((0, total_h)))
+    }
+
+    /// If no notifications remain and the panel is open, close the panel.
+    fn maybe_close_panel(&mut self) -> Task<Message> {
+        if self.state.notifications.is_empty() && self.state.notify_panel_open {
+            self.state.notify_panel_open = false;
+            return self.sync_surface_size();
+        }
+        Task::none()
     }
 }
 
@@ -490,8 +650,6 @@ fn ipc_stream() -> impl iced::futures::Stream<Item = Message> {
             Err(e) => warn!("Could not fetch initial workspaces: {e}"),
         }
 
-        // Fetch the active window title so the title widget shows immediately
-        // instead of showing "Desktop" until the next focus-change event.
         let title = fetch_active_window(&ipc).await;
         let _ = sender.try_send(Message::App(AppMessage::ActiveWindowChanged(title)));
 
@@ -545,6 +703,94 @@ fn config_stream() -> impl iced::futures::Stream<Item = Message> {
 
         loop { tokio::time::sleep(Duration::from_secs(3600)).await; }
     })
+}
+
+/// D-Bus `org.freedesktop.Notifications` listener.
+///
+/// Registers the bar as a notification daemon.  If another daemon is already
+/// running (e.g. dunst, mako, swaync) this subscription sleeps harmlessly and
+/// the notify widget will still show a static bell icon.
+fn notify_stream() -> impl iced::futures::Stream<Item = Message> {
+    iced::stream::channel(32, |mut iced_tx: Sender<Message>| async move {
+        // Bridge: zbus → iced via a tokio unbounded channel
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
+
+        let daemon = NotifDaemon { sender: tx, next_id: 0 };
+
+        let conn_result = zbus::connection::Builder::session()
+            .and_then(|b| b.name("org.freedesktop.Notifications"))
+            .and_then(|b| b.serve_at("/org/freedesktop/Notifications", daemon));
+
+        match conn_result {
+            Ok(builder) => match builder.build().await {
+                Ok(_conn) => {
+                    info!("Registered as org.freedesktop.Notifications daemon");
+                    // Forward messages from zbus → iced
+                    while let Some(msg) = rx.recv().await {
+                        let _ = iced_tx.try_send(msg);
+                    }
+                }
+                Err(e) => warn!("D-Bus build failed — notification daemon unavailable: {e}"),
+            },
+            Err(e) => {
+                warn!("Could not register notification daemon (another daemon running?): {e}");
+            }
+        }
+
+        loop { tokio::time::sleep(Duration::from_secs(3600)).await; }
+    })
+}
+
+// ── D-Bus notification interface ──────────────────────────────────────────────
+
+struct NotifDaemon {
+    sender:  tokio::sync::mpsc::UnboundedSender<Message>,
+    next_id: u32,
+}
+
+#[zbus::interface(name = "org.freedesktop.Notifications")]
+impl NotifDaemon {
+    /// Called by applications to display a notification.
+    async fn notify(
+        &mut self,
+        app_name:       String,
+        replaces_id:    u32,
+        _app_icon:      String,
+        summary:        String,
+        body:           String,
+        _actions:       Vec<String>,
+        _hints:         std::collections::HashMap<String, zbus::zvariant::OwnedValue>,
+        _expire_timeout: i32,
+    ) -> u32 {
+        let id = if replaces_id != 0 {
+            replaces_id
+        } else {
+            self.next_id += 1;
+            self.next_id
+        };
+        let _ = self.sender.send(Message::App(AppMessage::NotificationReceived {
+            id,
+            app_name,
+            summary,
+            body,
+        }));
+        id
+    }
+
+    /// Called by applications to close a specific notification.
+    fn close_notification(&self, id: u32) {
+        let _ = self.sender.send(Message::App(AppMessage::NotificationClosed(id)));
+    }
+
+    /// Returns the capabilities this server supports.
+    fn get_capabilities(&self) -> Vec<&'static str> {
+        vec!["body", "persistence"]
+    }
+
+    /// Returns server identity information.
+    fn get_server_information(&self) -> (&'static str, &'static str, &'static str, &'static str) {
+        ("bar", "bar", "0.1.0", "1.2")
+    }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────

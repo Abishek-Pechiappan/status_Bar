@@ -51,6 +51,23 @@ pub enum Message {
     /// Scroll down on keyboard widget — switch to previous layout.
     KeyboardLayoutPrev,
 
+    // ── Notifications ─────────────────────────────────────────────────────────
+    /// A new notification arrived via D-Bus `org.freedesktop.Notifications`.
+    NotificationReceived {
+        id: u32,
+        app_name: String,
+        summary: String,
+        body: String,
+    },
+    /// A notification was closed by the sender application.
+    NotificationClosed(u32),
+    /// User toggled the notification panel open/closed.
+    NotifyPanelToggle,
+    /// User dismissed a single notification entry from the panel.
+    NotifyDismiss(u32),
+    /// User pressed "Clear all" in the notification panel.
+    NotifyClearAll,
+
     // ── Internal ──────────────────────────────────────────────────────────────
     /// One-second timer tick — used to update the clock.
     Tick,
