@@ -141,6 +141,8 @@ struct Editor {
     picker_sat:   f32,
     /// Alpha / opacity (0 = transparent, 1 = opaque).
     picker_alpha: f32,
+    /// `true` when a non-structural change is waiting to be auto-saved.
+    pending_autosave: bool,
 }
 
 // ── Messages ──────────────────────────────────────────────────────────────────
@@ -192,6 +194,7 @@ enum Message {
 
     // Actions
     Save,
+    AutoSaveTick,
     KeyEvent(iced::keyboard::Event),
 }
 
@@ -233,12 +236,13 @@ impl Editor {
                 border_color_buf,
                 clock_format_buf,
                 date_format_buf,
-                active_picker: None,
-                picker_h:      220.0,
-                picker_s:      1.0,
-                picker_v:      0.8,
-                picker_sat:    1.0,
-                picker_alpha:  1.0,
+                active_picker:    None,
+                picker_h:         220.0,
+                picker_s:         1.0,
+                picker_v:         0.8,
+                picker_sat:       1.0,
+                picker_alpha:     1.0,
+                pending_autosave: false,
             },
             Task::none(),
         )
@@ -333,7 +337,11 @@ impl Editor {
 
 impl Editor {
     fn subscription(&self) -> Subscription<Message> {
-        iced::keyboard::listen().map(Message::KeyEvent)
+        Subscription::batch([
+            iced::keyboard::listen().map(Message::KeyEvent),
+            iced::time::every(std::time::Duration::from_millis(400))
+                .map(|_| Message::AutoSaveTick),
+        ])
     }
 }
 
@@ -341,8 +349,30 @@ impl Editor {
 
 impl Editor {
     fn update(&mut self, msg: Message) -> Task<Message> {
-        if !matches!(msg, Message::Save | Message::Tab(_) | Message::TogglePicker(_)) {
+        // Clear save status on any interaction except save-related or timer messages.
+        if !matches!(
+            msg,
+            Message::Save | Message::Tab(_) | Message::TogglePicker(_) | Message::AutoSaveTick
+        ) {
             self.save_status = SaveStatus::Idle;
+        }
+
+        // Mark a pending auto-save for any non-structural, non-UI message.
+        // Structural changes (height/position/margins) need a manual Save+restart
+        // so we deliberately exclude them from auto-save triggering.
+        if !matches!(
+            msg,
+            Message::HeightChanged(_)
+                | Message::PositionChanged(_)
+                | Message::MarginChanged(_)
+                | Message::MarginTopChanged(_)
+                | Message::Tab(_)
+                | Message::Save
+                | Message::AutoSaveTick
+                | Message::KeyEvent(_)
+                | Message::TogglePicker(_)
+        ) {
+            self.pending_autosave = true;
         }
 
         match msg {
@@ -478,9 +508,29 @@ impl Editor {
                 self.save_status = SaveStatus::Idle;
             }
 
+            // ── Auto-save (fires every 400 ms) ───────────────────────────────
+            Message::AutoSaveTick => {
+                if self.pending_autosave {
+                    let has_structural =
+                        self.config.global.height     != self.launched_height
+                        || self.config.global.position   != self.launched_position
+                        || self.config.global.margin     != self.launched_margin
+                        || self.config.global.margin_top != self.launched_margin_top;
+                    if !has_structural {
+                        if let Err(e) = save_config(&self.config, &self.config_path) {
+                            self.save_status = SaveStatus::Error(e);
+                        }
+                        self.pending_autosave = false;
+                    }
+                    // If structural changes are pending, leave pending_autosave = true
+                    // so it fires once after the user clicks Save+restart.
+                }
+            }
+
             // ── Save ─────────────────────────────────────────────────────────
             Message::Save => {
                 self.do_save();
+                self.pending_autosave = false;
             }
 
             // ── Keyboard shortcuts ───────────────────────────────────────────
@@ -519,21 +569,37 @@ impl Editor {
             Section::Theme  => self.view_theme(),
         };
 
-        let status: Element<'_, Message> = match &self.save_status {
-            SaveStatus::Idle        => text("").into(),
-            SaveStatus::Saved       => text("✓ Saved — bar will reload automatically")
-                .color(Color::from_rgb8(0xa6, 0xe3, 0xa1))
-                .into(),
-            SaveStatus::Restarting  => text("✓ Saved — restarting bar…")
-                .color(Color::from_rgb8(0x89, 0xb4, 0xfa))
-                .into(),
-            SaveStatus::Error(e)    => text(format!("✗ {e}"))
-                .color(Color::from_rgb8(0xf3, 0x8b, 0xa8))
-                .into(),
+        let has_structural =
+            self.config.global.height     != self.launched_height
+            || self.config.global.position   != self.launched_position
+            || self.config.global.margin     != self.launched_margin
+            || self.config.global.margin_top != self.launched_margin_top;
+
+        let status: Element<'_, Message> = if has_structural {
+            text("⟲ Save required — geometry changes need a bar restart")
+                .size(12.0)
+                .color(Color::from_rgb8(0xf9, 0xe2, 0xaf))
+                .into()
+        } else {
+            match &self.save_status {
+                SaveStatus::Idle        => text("● Theme changes apply live automatically")
+                    .size(12.0)
+                    .color(Color::from_rgb8(0x6c, 0x70, 0x86))
+                    .into(),
+                SaveStatus::Saved       => text("✓ Saved")
+                    .color(Color::from_rgb8(0xa6, 0xe3, 0xa1))
+                    .into(),
+                SaveStatus::Restarting  => text("✓ Saved — restarting bar…")
+                    .color(Color::from_rgb8(0x89, 0xb4, 0xfa))
+                    .into(),
+                SaveStatus::Error(e)    => text(format!("✗ {e}"))
+                    .color(Color::from_rgb8(0xf3, 0x8b, 0xa8))
+                    .into(),
+            }
         };
 
         let footer = row![
-            button(text("Save Changes")).on_press(Message::Save),
+            button(text("Save")).on_press(Message::Save),
             button(text("Reset Defaults"))
                 .on_press(Message::ResetDefaults)
                 .style(iced::widget::button::danger),
