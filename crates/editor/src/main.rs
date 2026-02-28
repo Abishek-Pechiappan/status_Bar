@@ -9,6 +9,7 @@ const ALL_WIDGETS: &[&str] = &[
     "workspaces", "title", "clock",
     "cpu", "memory", "network", "battery",
     "disk", "temperature", "volume", "brightness",
+    "swap", "uptime", "load", "keyboard", "media", "custom",
 ];
 
 fn main() -> iced::Result {

@@ -1,13 +1,15 @@
 use bar_core::{event::Message, state::AppState};
 use bar_theme::Theme;
 use iced::{
-    widget::{row, text},
-    Alignment, Element,
+    mouse::ScrollDelta,
+    widget::{mouse_area, text},
+    Element,
 };
 
-/// Displays the screen brightness as a percentage.
+/// Displays screen brightness as a percentage.
 ///
-/// Returns `None` when no backlight device is found — callers should skip rendering.
+/// Interactive: scroll wheel adjusts brightness ±5% via `brightnessctl`.
+/// Returns `None` when no backlight device is found.
 #[derive(Debug, Default)]
 pub struct BrightnessWidget;
 
@@ -22,9 +24,18 @@ impl BrightnessWidget {
         theme: &'a Theme,
     ) -> Option<Element<'a, Message>> {
         let pct = state.system.brightness?;
+        let content = text(format!("󰃞 {pct}%")).size(theme.font_size);
+
         Some(
-            row![text(format!("󰃞 {pct}%")).size(theme.font_size)]
-                .align_y(Alignment::Center)
+            mouse_area(content)
+                .on_scroll(|delta| {
+                    let step = match delta {
+                        ScrollDelta::Lines { y, .. } | ScrollDelta::Pixels { y, .. } => {
+                            if y > 0.0 { 5 } else { -5 }
+                        }
+                    };
+                    Message::BrightnessAdjust(step)
+                })
                 .into(),
         )
     }

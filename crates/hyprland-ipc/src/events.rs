@@ -7,6 +7,8 @@ pub enum HyprlandEvent {
     ActiveWindow(ActiveWindowEvent),
     Fullscreen(bool),
     MonitorFocused(String),
+    /// Active keyboard layout changed.  Carries the layout name string.
+    ActiveLayout(String),
     /// An event we don't handle yet — carries the raw line for debugging.
     Unknown(String),
 }
@@ -61,6 +63,13 @@ pub fn parse_event(line: &str) -> HyprlandEvent {
         "fullscreen" => HyprlandEvent::Fullscreen(data.trim() == "1"),
         "monitoradded" | "monitorfocused" => {
             HyprlandEvent::MonitorFocused(data.trim().to_string())
+        }
+        "activelayout" => {
+            // Format: "keyboard-name,layout-name"
+            let layout = data.split_once(',')
+                .map(|(_, l)| l.trim().to_string())
+                .unwrap_or_else(|| data.trim().to_string());
+            HyprlandEvent::ActiveLayout(layout)
         }
         _ => HyprlandEvent::Unknown(line.to_string()),
     }

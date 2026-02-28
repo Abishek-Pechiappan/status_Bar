@@ -27,9 +27,25 @@ pub enum Message {
     /// Config file changed on disk — triggers a live reload.
     ConfigReloaded,
 
+    // ── Hyprland IPC (continued) ──────────────────────────────────────────────
+    /// Active keyboard layout changed (from Hyprland `activelayout` event).
+    KeyboardLayoutChanged(String),
+
     // ── User actions ──────────────────────────────────────────────────────────
     /// User clicked a workspace button — request Hyprland to switch.
     WorkspaceSwitchRequested(u32),
+    /// Scroll on volume widget — positive = louder, negative = quieter (% steps).
+    VolumeAdjust(i32),
+    /// Click on volume widget — toggle mute.
+    VolumeMuteToggle,
+    /// Scroll on brightness widget — positive = brighter, negative = dimmer (% steps).
+    BrightnessAdjust(i32),
+    /// Click on media widget — play/pause.
+    MediaPlayPause,
+    /// Next track.
+    MediaNext,
+    /// Previous track.
+    MediaPrev,
 
     // ── Internal ──────────────────────────────────────────────────────────────
     /// One-second timer tick — used to update the clock.

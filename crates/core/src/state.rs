@@ -12,6 +12,8 @@ pub struct AppState {
     pub active_window: Option<String>,
     /// Whether any window is in fullscreen mode.
     pub is_fullscreen: bool,
+    /// Active keyboard layout name (set by Hyprland `activelayout` IPC event).
+    pub keyboard_layout: String,
     /// Latest system resource snapshot.
     pub system: SystemSnapshot,
     /// Current local time (updated every second).
@@ -25,6 +27,7 @@ impl Default for AppState {
             active_workspace: 1,
             active_window: None,
             is_fullscreen: false,
+            keyboard_layout: String::new(),
             system: SystemSnapshot::default(),
             time: Local::now(),
         }
@@ -52,6 +55,10 @@ pub struct SystemSnapshot {
     pub ram_used: u64,
     /// Total RAM in bytes.
     pub ram_total: u64,
+    /// Swap used in bytes.
+    pub swap_used: u64,
+    /// Total swap in bytes.
+    pub swap_total: u64,
     /// Root filesystem: used bytes.
     pub disk_used: u64,
     /// Root filesystem: total bytes.
@@ -64,6 +71,8 @@ pub struct SystemSnapshot {
     pub battery_percent: Option<u8>,
     /// `true` = charging / full, `false` = discharging, `None` = unknown.
     pub battery_charging: Option<bool>,
+    /// Estimated minutes of battery remaining (discharging) or until full (charging).
+    pub battery_time_min: Option<u32>,
     /// CPU package temperature in °C, `None` if unavailable.
     pub cpu_temp: Option<f32>,
     /// Audio output volume (0.0 – 1.0+), `None` if wpctl is unavailable.
@@ -72,6 +81,22 @@ pub struct SystemSnapshot {
     pub volume_muted: bool,
     /// Screen brightness 0–100, `None` if no backlight found.
     pub brightness: Option<u8>,
+    /// System uptime in seconds.
+    pub uptime_secs: u64,
+    /// 1-minute load average.
+    pub load_1: f32,
+    /// 5-minute load average.
+    pub load_5: f32,
+    /// 15-minute load average.
+    pub load_15: f32,
+    /// Media player: current track title, `None` if nothing is playing.
+    pub media_title: Option<String>,
+    /// Media player: current track artist.
+    pub media_artist: Option<String>,
+    /// `true` when a media player is actively playing.
+    pub media_playing: bool,
+    /// Output of the user-configured custom shell command (empty if none).
+    pub custom_output: String,
 }
 
 impl SystemSnapshot {

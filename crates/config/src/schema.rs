@@ -48,6 +48,9 @@ pub struct GlobalConfig {
     pub margin: u32,
     /// Vertical gap between bar and screen edge in logical pixels (floating look).
     pub margin_top: u32,
+    /// Shell command to run every poll cycle, displayed by the `custom` widget.
+    /// Empty string disables the custom widget.
+    pub custom_command: String,
 }
 
 impl Default for GlobalConfig {
@@ -59,6 +62,7 @@ impl Default for GlobalConfig {
             opacity:        0.95,
             margin:         0,
             margin_top:     0,
+            custom_command: String::new(),
         }
     }
 }

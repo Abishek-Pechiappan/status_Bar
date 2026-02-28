@@ -1,8 +1,8 @@
 //! Wayland layer-shell surface for `bar`.
 //!
 //! Owns the Iced application loop and wires together all background tasks:
-//! - Hyprland IPC event stream (workspaces, active window, fullscreen)
-//! - System resource monitor (CPU, RAM, disk)
+//! - Hyprland IPC event stream (workspaces, active window, fullscreen, keyboard layout)
+//! - System resource monitor (CPU, RAM, disk, media, etc.)
 //! - Config file watcher (live reload on change)
 //! - 1-second timer (clock)
 
@@ -14,8 +14,9 @@ use bar_core::{
 use bar_ipc::{fetch_workspaces, HyprlandEvent, HyprlandIpc};
 use bar_theme::{Color as ThemeColor, Theme};
 use bar_widgets::{
-    BatteryWidget, BrightnessWidget, ClockWidget, CpuWidget, DiskWidget, MemoryWidget,
-    NetworkWidget, TempWidget, TitleWidget, VolumeWidget, WorkspaceWidget,
+    BatteryWidget, BrightnessWidget, ClockWidget, CpuWidget, CustomWidget, DiskWidget,
+    KeyboardWidget, LoadWidget, MediaWidget, MemoryWidget, NetworkWidget, SwapWidget, TempWidget,
+    TitleWidget, UptimeWidget, VolumeWidget, WorkspaceWidget,
 };
 use chrono::Local;
 use futures::channel::mpsc::Sender;
@@ -29,11 +30,17 @@ use iced_layershell::{
     settings::{LayerShellSettings, Settings},
     to_layer_message,
 };
+use std::sync::OnceLock;
 use std::time::Duration;
 use tracing::{error, info, warn};
 
 /// System monitor poll interval (milliseconds).
 const SYSTEM_INTERVAL_MS: u64 = 2_000;
+
+/// Custom shell command set once from config at startup.
+/// Shared with the system monitor subscription (which is a free function and
+/// cannot receive parameters directly).
+static CUSTOM_CMD: OnceLock<String> = OnceLock::new();
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -54,12 +61,15 @@ pub fn run() -> iced_layershell::Result {
         0
     };
 
+    // Initialise custom command before the app starts so system_stream can read it.
+    let _ = CUSTOM_CMD.set(config.global.custom_command.clone());
+
     application(Bar::new, Bar::namespace, Bar::update, Bar::view)
         .subscription(Bar::subscription)
         .style(Bar::style)
         .settings(Settings {
             layer_settings: LayerShellSettings {
-                size:           Some((0, height)), // width=0 + L|R anchor = full-width stretch
+                size:           Some((0, height)),
                 exclusive_zone,
                 anchor,
                 layer:          Layer::Top,
@@ -73,17 +83,10 @@ pub fn run() -> iced_layershell::Result {
 
 // ── Message ───────────────────────────────────────────────────────────────────
 
-/// Top-level application messages.
-///
-/// `#[to_layer_message]` injects layer-shell control variants (AnchorChange,
-/// SizeChange, etc.).  Those are handled by the backend in 0.15 and never
-/// reach `update()`.
 #[to_layer_message]
 #[derive(Debug, Clone)]
 pub enum Message {
-    /// Propagate a core event-bus message.
     App(AppMessage),
-    /// One-second timer tick — updates the clock display.
     Tick,
 }
 
@@ -93,21 +96,24 @@ struct Bar {
     state:      AppState,
     config:     BarConfig,
     theme:      Theme,
-    // Left
+    // Widgets — always constructed, shown/hidden based on config layout
     workspaces: WorkspaceWidget,
     title:      TitleWidget,
-    // Center
     clock:      ClockWidget,
-    // Right (always present)
     network:    NetworkWidget,
     cpu:        CpuWidget,
     memory:     MemoryWidget,
-    // Right (optional — hidden when sensor unavailable)
     disk:       DiskWidget,
     temp:       TempWidget,
     volume:     VolumeWidget,
     brightness: BrightnessWidget,
     battery:    BatteryWidget,
+    swap:       SwapWidget,
+    uptime:     UptimeWidget,
+    load:       LoadWidget,
+    keyboard:   KeyboardWidget,
+    media:      MediaWidget,
+    custom:     CustomWidget,
 }
 
 impl Bar {
@@ -130,10 +136,14 @@ impl Bar {
             volume:     VolumeWidget::new(),
             brightness: BrightnessWidget::new(),
             battery:    BatteryWidget::new(),
+            swap:       SwapWidget::new(),
+            uptime:     UptimeWidget::new(),
+            load:       LoadWidget::new(),
+            keyboard:   KeyboardWidget::new(),
+            media:      MediaWidget::new(),
+            custom:     CustomWidget::new(),
         };
 
-        // Kick off an initial workspace list fetch so the widget isn't blank
-        // until the first IPC event arrives.
         let init_task = Task::perform(
             async {
                 let ipc = HyprlandIpc::new()?;
@@ -145,7 +155,7 @@ impl Bar {
                 Ok(ws)  => Message::App(AppMessage::WorkspaceListUpdated(ws)),
                 Err(e)  => {
                     warn!("Initial workspace fetch failed: {e}");
-                    Message::Tick // benign fallback
+                    Message::Tick
                 }
             },
         );
@@ -166,13 +176,13 @@ impl Bar {
                 Task::none()
             }
             Message::App(msg) => self.handle_app(msg),
-            // Layer-shell injected variants handled by backend in iced-layershell 0.15.
             _ => Task::none(),
         }
     }
 
     fn handle_app(&mut self, msg: AppMessage) -> Task<Message> {
         match msg {
+            // ── IPC events ────────────────────────────────────────────────────
             AppMessage::WorkspaceChanged(id) => {
                 self.state.active_workspace = id;
             }
@@ -185,9 +195,16 @@ impl Bar {
             AppMessage::FullscreenStateChanged(fs) => {
                 self.state.is_fullscreen = fs;
             }
+            AppMessage::KeyboardLayoutChanged(layout) => {
+                self.state.keyboard_layout = layout;
+            }
+
+            // ── System monitor ────────────────────────────────────────────────
             AppMessage::SystemSnapshot(snapshot) => {
                 self.state.system = snapshot;
             }
+
+            // ── Config live-reload ────────────────────────────────────────────
             AppMessage::ConfigReloaded => {
                 match load_config(default_path()) {
                     Ok(cfg) => {
@@ -198,8 +215,9 @@ impl Bar {
                     Err(e) => warn!("Config reload failed: {e}"),
                 }
             }
+
+            // ── User interactions ─────────────────────────────────────────────
             AppMessage::WorkspaceSwitchRequested(id) => {
-                // Fire-and-forget: ask Hyprland to switch workspace.
                 return Task::perform(
                     async move {
                         let _ = tokio::process::Command::new("hyprctl")
@@ -207,9 +225,86 @@ impl Bar {
                             .output()
                             .await;
                     },
-                    |_| Message::Tick, // benign acknowledgement
+                    |_| Message::Tick,
                 );
             }
+            AppMessage::VolumeAdjust(delta) => {
+                let arg = if delta >= 0 {
+                    format!("{delta}%+")
+                } else {
+                    format!("{}%-", delta.unsigned_abs())
+                };
+                return Task::perform(
+                    async move {
+                        let _ = tokio::process::Command::new("wpctl")
+                            .args(["set-volume", "-l", "1.5", "@DEFAULT_AUDIO_SINK@", &arg])
+                            .output()
+                            .await;
+                    },
+                    |_| Message::Tick,
+                );
+            }
+            AppMessage::VolumeMuteToggle => {
+                return Task::perform(
+                    async {
+                        let _ = tokio::process::Command::new("wpctl")
+                            .args(["set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"])
+                            .output()
+                            .await;
+                    },
+                    |_| Message::Tick,
+                );
+            }
+            AppMessage::BrightnessAdjust(delta) => {
+                let arg = if delta >= 0 {
+                    format!("{delta}%+")
+                } else {
+                    format!("{}%-", delta.unsigned_abs())
+                };
+                return Task::perform(
+                    async move {
+                        let _ = tokio::process::Command::new("brightnessctl")
+                            .args(["set", &arg])
+                            .output()
+                            .await;
+                    },
+                    |_| Message::Tick,
+                );
+            }
+            AppMessage::MediaPlayPause => {
+                return Task::perform(
+                    async {
+                        let _ = tokio::process::Command::new("playerctl")
+                            .arg("play-pause")
+                            .output()
+                            .await;
+                    },
+                    |_| Message::Tick,
+                );
+            }
+            AppMessage::MediaNext => {
+                return Task::perform(
+                    async {
+                        let _ = tokio::process::Command::new("playerctl")
+                            .arg("next")
+                            .output()
+                            .await;
+                    },
+                    |_| Message::Tick,
+                );
+            }
+            AppMessage::MediaPrev => {
+                return Task::perform(
+                    async {
+                        let _ = tokio::process::Command::new("playerctl")
+                            .arg("previous")
+                            .output()
+                            .await;
+                    },
+                    |_| Message::Tick,
+                );
+            }
+
             AppMessage::Tick | AppMessage::Shutdown => {}
         }
         Task::none()
@@ -217,10 +312,6 @@ impl Bar {
 
     // ── View ──────────────────────────────────────────────────────────────────
 
-    /// Map a widget kind string to its rendered element.
-    ///
-    /// Returns `None` for optional sensor widgets when the sensor is
-    /// unavailable, and for unknown kind strings.
     fn render_widget<'a>(&'a self, kind: &str) -> Option<Element<'a, AppMessage>> {
         match kind {
             "workspaces"  => Some(self.workspaces.view(&self.state, &self.theme)),
@@ -229,11 +320,17 @@ impl Bar {
             "cpu"         => Some(self.cpu.view(&self.state, &self.theme)),
             "memory"      => Some(self.memory.view(&self.state, &self.theme)),
             "network"     => Some(self.network.view(&self.state, &self.theme)),
+            "uptime"      => Some(self.uptime.view(&self.state, &self.theme)),
+            "load"        => Some(self.load.view(&self.state, &self.theme)),
             "battery"     => self.battery.view(&self.state, &self.theme),
             "disk"        => self.disk.view(&self.state, &self.theme),
             "temperature" => self.temp.view(&self.state, &self.theme),
             "volume"      => self.volume.view(&self.state, &self.theme),
             "brightness"  => self.brightness.view(&self.state, &self.theme),
+            "swap"        => self.swap.view(&self.state, &self.theme),
+            "keyboard"    => self.keyboard.view(&self.state, &self.theme),
+            "media"       => self.media.view(&self.state, &self.theme),
+            "custom"      => self.custom.view(&self.state, &self.theme),
             other => {
                 warn!("Unknown widget kind in config: {other}");
                 None
@@ -247,8 +344,6 @@ impl Bar {
         let radius = self.theme.border_radius;
         let wbg    = self.theme.widget_bg;
 
-        // Build each section dynamically from config — layout changes live-reload
-        // without a restart because ConfigReloaded updates self.config.
         let left_items: Vec<Element<'_, Message>> = self.config.left
             .iter()
             .filter_map(|w| {
@@ -338,39 +433,26 @@ impl Bar {
 }
 
 // ── Subscription streams ──────────────────────────────────────────────────────
-//
-// Each free function acts as both the stream builder AND the unique identity
-// key for `Subscription::run(fn_ptr)`.  Iced uses the function pointer address
-// to deduplicate subscriptions across redraws.
 
-/// Connects to the Hyprland event socket, fetches the initial workspace list,
-/// then streams live IPC events indefinitely (auto-reconnects on drop).
 fn ipc_stream() -> impl iced::futures::Stream<Item = Message> {
     iced::stream::channel(32, |mut sender: Sender<Message>| async move {
         let ipc = match HyprlandIpc::new() {
             Ok(c)  => c,
             Err(e) => {
                 warn!("Hyprland IPC unavailable (not under Hyprland?): {e}");
-                // Bar still runs without workspace data.
-                loop {
-                    tokio::time::sleep(Duration::from_secs(3600)).await;
-                }
+                loop { tokio::time::sleep(Duration::from_secs(3600)).await; }
             }
         };
 
-        // Send the initial workspace list immediately on connect.
         match fetch_workspaces(&ipc).await {
             Ok(ws) => {
                 let workspaces: Vec<WorkspaceInfo> =
                     ws.into_iter().map(ipc_to_core_workspace).collect();
-                let _ = sender.try_send(Message::App(
-                    AppMessage::WorkspaceListUpdated(workspaces),
-                ));
+                let _ = sender.try_send(Message::App(AppMessage::WorkspaceListUpdated(workspaces)));
             }
             Err(e) => warn!("Could not fetch initial workspaces: {e}"),
         }
 
-        // Stream live events; reconnect whenever the socket closes.
         loop {
             match tokio::net::UnixStream::connect(ipc.event_socket()).await {
                 Ok(stream) => {
@@ -398,23 +480,19 @@ fn ipc_stream() -> impl iced::futures::Stream<Item = Message> {
     })
 }
 
-/// Polls system resources every [`SYSTEM_INTERVAL_MS`] ms and forwards snapshots.
 fn system_stream() -> impl iced::futures::Stream<Item = Message> {
     iced::stream::channel(4, |mut sender: Sender<Message>| async move {
-        let mut rx = bar_system::spawn_monitor(SYSTEM_INTERVAL_MS);
+        let custom_cmd = CUSTOM_CMD.get().cloned().unwrap_or_default();
+        let mut rx = bar_system::spawn_monitor(SYSTEM_INTERVAL_MS, custom_cmd);
 
         while let Some(snapshot) = rx.recv().await {
             let _ = sender.try_send(Message::App(AppMessage::SystemSnapshot(snapshot)));
         }
 
-        // Monitor task exited — shouldn't happen; stall rather than crash.
-        loop {
-            tokio::time::sleep(Duration::from_secs(3600)).await;
-        }
+        loop { tokio::time::sleep(Duration::from_secs(3600)).await; }
     })
 }
 
-/// Watches `~/.config/bar/bar.toml` for writes and sends `ConfigReloaded`.
 fn config_stream() -> impl iced::futures::Stream<Item = Message> {
     iced::stream::channel(1, |mut sender: Sender<Message>| async move {
         let (_watcher, mut rx) = ConfigWatcher::spawn(default_path());
@@ -423,16 +501,12 @@ fn config_stream() -> impl iced::futures::Stream<Item = Message> {
             let _ = sender.try_send(Message::App(AppMessage::ConfigReloaded));
         }
 
-        loop {
-            tokio::time::sleep(Duration::from_secs(3600)).await;
-        }
+        loop { tokio::time::sleep(Duration::from_secs(3600)).await; }
     })
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Wrap a widget element in a styled container with optional background color
-/// and border radius — produces the pill / rounded-widget look when enabled.
 fn pill_wrap<'a>(
     elem: Element<'a, Message>,
     radius: f32,
@@ -454,7 +528,6 @@ fn position_to_anchor(pos: Position) -> Anchor {
     }
 }
 
-/// Convert an `ipc::WorkspaceInfo` (i32 ids) to `core::WorkspaceInfo` (u32 ids).
 fn ipc_to_core_workspace(w: bar_ipc::WorkspaceInfo) -> WorkspaceInfo {
     WorkspaceInfo {
         id:      w.id.unsigned_abs(),
@@ -464,7 +537,6 @@ fn ipc_to_core_workspace(w: bar_ipc::WorkspaceInfo) -> WorkspaceInfo {
     }
 }
 
-/// Map a raw Hyprland event to an `AppMessage`, filtering out unhandled variants.
 fn convert_hypr_event(event: HyprlandEvent) -> Option<AppMessage> {
     match event {
         HyprlandEvent::Workspace(ws) => Some(AppMessage::WorkspaceChanged(ws.id)),
@@ -473,6 +545,7 @@ fn convert_hypr_event(event: HyprlandEvent) -> Option<AppMessage> {
             Some(AppMessage::ActiveWindowChanged(title))
         }
         HyprlandEvent::Fullscreen(fs) => Some(AppMessage::FullscreenStateChanged(fs)),
+        HyprlandEvent::ActiveLayout(layout) => Some(AppMessage::KeyboardLayoutChanged(layout)),
         HyprlandEvent::MonitorFocused(_) | HyprlandEvent::Unknown(_) => None,
     }
 }

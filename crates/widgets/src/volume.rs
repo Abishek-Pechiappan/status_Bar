@@ -1,13 +1,15 @@
 use bar_core::{event::Message, state::AppState};
 use bar_theme::Theme;
 use iced::{
-    widget::{row, text},
-    Alignment, Element,
+    mouse::ScrollDelta,
+    widget::{mouse_area, text},
+    Element,
 };
 
 /// Displays the default audio sink volume.
 ///
-/// Shows a mute icon when muted.  Returns `None` when wpctl is unavailable.
+/// Interactive: scroll wheel adjusts volume ±5%, left-click toggles mute.
+/// Returns `None` when wpctl is unavailable.
 #[derive(Debug, Default)]
 pub struct VolumeWidget;
 
@@ -40,9 +42,19 @@ impl VolumeWidget {
             format!("{icon} {pct}%")
         };
 
+        let content = text(label).size(theme.font_size);
+
         Some(
-            row![text(label).size(theme.font_size)]
-                .align_y(Alignment::Center)
+            mouse_area(content)
+                .on_scroll(|delta| {
+                    let step = match delta {
+                        ScrollDelta::Lines { y, .. } | ScrollDelta::Pixels { y, .. } => {
+                            if y > 0.0 { 5 } else { -5 }
+                        }
+                    };
+                    Message::VolumeAdjust(step)
+                })
+                .on_press(Message::VolumeMuteToggle)
                 .into(),
         )
     }

@@ -11,8 +11,11 @@ use tokio::time;
 /// Spawn a background Tokio task that polls system stats every `interval_ms`
 /// milliseconds and forwards [`SystemSnapshot`]s through the returned channel.
 ///
+/// `custom_cmd` is a shell command string whose stdout is exposed as
+/// `snapshot.custom_output`.  Pass an empty string to disable.
+///
 /// The task stops automatically when the receiver is dropped.
-pub fn spawn_monitor(interval_ms: u64) -> mpsc::Receiver<SystemSnapshot> {
+pub fn spawn_monitor(interval_ms: u64, custom_cmd: String) -> mpsc::Receiver<SystemSnapshot> {
     let (tx, rx) = mpsc::channel(4);
     let interval = Duration::from_millis(interval_ms);
     let interval_secs = interval_ms as f64 / 1000.0;
@@ -25,12 +28,12 @@ pub fn spawn_monitor(interval_ms: u64) -> mpsc::Receiver<SystemSnapshot> {
         loop {
             ticker.tick().await;
             sys.refresh_all();
-            networks.refresh(false); // false = keep existing interfaces list
+            networks.refresh(false);
 
-            let snapshot = take_snapshot(&sys, &networks, interval_secs).await;
+            let snapshot = take_snapshot(&sys, &networks, interval_secs, &custom_cmd).await;
 
             if tx.send(snapshot).await.is_err() {
-                break; // all receivers dropped
+                break;
             }
         }
     });
@@ -38,7 +41,12 @@ pub fn spawn_monitor(interval_ms: u64) -> mpsc::Receiver<SystemSnapshot> {
     rx
 }
 
-async fn take_snapshot(sys: &System, networks: &Networks, interval_secs: f64) -> SystemSnapshot {
+async fn take_snapshot(
+    sys: &System,
+    networks: &Networks,
+    interval_secs: f64,
+    custom_cmd: &str,
+) -> SystemSnapshot {
     // ── CPU ──────────────────────────────────────────────────────────────────
     let cpu_per_core: Vec<f32> = sys.cpus().iter().map(|c| c.cpu_usage()).collect();
     let cpu_average = if cpu_per_core.is_empty() {
@@ -49,6 +57,12 @@ async fn take_snapshot(sys: &System, networks: &Networks, interval_secs: f64) ->
 
     // ── CPU temperature ───────────────────────────────────────────────────────
     let cpu_temp = read_cpu_temp();
+
+    // ── Memory + Swap ────────────────────────────────────────────────────────
+    let ram_used  = sys.used_memory();
+    let ram_total = sys.total_memory();
+    let swap_used  = sys.used_swap();
+    let swap_total = sys.total_swap();
 
     // ── Disk ─────────────────────────────────────────────────────────────────
     let disks = Disks::new_with_refreshed_list();
@@ -69,6 +83,7 @@ async fn take_snapshot(sys: &System, networks: &Networks, interval_secs: f64) ->
         Some((pct, chg)) => (Some(pct), Some(chg)),
         None             => (None, None),
     };
+    let battery_time_min = battery::read_battery_time();
 
     // ── Volume ───────────────────────────────────────────────────────────────
     let (volume, volume_muted) = read_volume().await;
@@ -76,30 +91,55 @@ async fn take_snapshot(sys: &System, networks: &Networks, interval_secs: f64) ->
     // ── Brightness ───────────────────────────────────────────────────────────
     let brightness = read_brightness();
 
+    // ── Uptime ───────────────────────────────────────────────────────────────
+    let uptime_secs = System::uptime();
+
+    // ── Load averages ────────────────────────────────────────────────────────
+    let (load_1, load_5, load_15) = read_loadavg();
+
+    // ── Media player (playerctl) ─────────────────────────────────────────────
+    let (media_title, media_artist, media_playing) = read_media().await;
+
+    // ── Custom command ───────────────────────────────────────────────────────
+    let custom_output = if custom_cmd.is_empty() {
+        String::new()
+    } else {
+        run_custom(custom_cmd).await
+    };
+
     SystemSnapshot {
         cpu_per_core,
         cpu_average,
-        ram_used:   sys.used_memory(),
-        ram_total:  sys.total_memory(),
+        ram_used,
+        ram_total,
+        swap_used,
+        swap_total,
         disk_used,
         disk_total,
         net_rx,
         net_tx,
         battery_percent,
         battery_charging,
+        battery_time_min,
         cpu_temp,
         volume,
         volume_muted,
         brightness,
+        uptime_secs,
+        load_1,
+        load_5,
+        load_15,
+        media_title,
+        media_artist,
+        media_playing,
+        custom_output,
     }
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Read the CPU package/die temperature from sysinfo Components.
 fn read_cpu_temp() -> Option<f32> {
     let components = Components::new_with_refreshed_list();
-    // Prefer "Package" label (Intel/AMD die temp), fall back to first CPU core.
     components
         .iter()
         .find(|c| {
@@ -115,8 +155,6 @@ fn read_cpu_temp() -> Option<f32> {
         .and_then(|c| c.temperature())
 }
 
-/// Query the default audio sink volume via `wpctl`.
-/// Returns `(Some(volume), is_muted)` or `(None, false)` if wpctl is absent.
 async fn read_volume() -> (Option<f32>, bool) {
     let result = tokio::process::Command::new("wpctl")
         .args(["get-volume", "@DEFAULT_AUDIO_SINK@"])
@@ -125,7 +163,6 @@ async fn read_volume() -> (Option<f32>, bool) {
 
     match result {
         Ok(out) if out.status.success() => {
-            // Output: "Volume: 0.50\n" or "Volume: 0.50 [MUTED]\n"
             let text = String::from_utf8_lossy(&out.stdout);
             let muted = text.contains("[MUTED]");
             let vol = text
@@ -139,24 +176,74 @@ async fn read_volume() -> (Option<f32>, bool) {
     }
 }
 
-/// Read screen brightness as a percentage from `/sys/class/backlight`.
 fn read_brightness() -> Option<u8> {
     let dir = std::fs::read_dir("/sys/class/backlight").ok()?;
     for entry in dir.flatten() {
         let path = entry.path();
         let current: u64 = std::fs::read_to_string(path.join("brightness"))
-            .ok()?
-            .trim()
-            .parse()
-            .ok()?;
+            .ok()?.trim().parse().ok()?;
         let max: u64 = std::fs::read_to_string(path.join("max_brightness"))
-            .ok()?
-            .trim()
-            .parse()
-            .ok()?;
+            .ok()?.trim().parse().ok()?;
         if max > 0 {
             return Some(((current * 100) / max).min(100) as u8);
         }
     }
     None
+}
+
+fn read_loadavg() -> (f32, f32, f32) {
+    let content = std::fs::read_to_string("/proc/loadavg").unwrap_or_default();
+    let mut parts = content.split_whitespace();
+    let l1  = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
+    let l5  = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
+    let l15 = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0.0);
+    (l1, l5, l15)
+}
+
+/// Query playerctl for the current media player state.
+async fn read_media() -> (Option<String>, Option<String>, bool) {
+    let status = tokio::process::Command::new("playerctl")
+        .arg("status")
+        .output()
+        .await;
+
+    let status_str = match status {
+        Ok(out) if out.status.success() => {
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        }
+        _ => return (None, None, false),
+    };
+
+    if status_str == "Stopped" || status_str.is_empty() {
+        return (None, None, false);
+    }
+
+    let playing = status_str == "Playing";
+    let title  = playerctl_get(&["metadata", "title"]).await;
+    let artist = playerctl_get(&["metadata", "artist"]).await;
+    (title, artist, playing)
+}
+
+async fn playerctl_get(args: &[&str]) -> Option<String> {
+    let out = tokio::process::Command::new("playerctl")
+        .args(args)
+        .output()
+        .await
+        .ok()?;
+    if out.status.success() {
+        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+        if s.is_empty() { None } else { Some(s) }
+    } else {
+        None
+    }
+}
+
+/// Run an arbitrary shell command and return its trimmed stdout.
+async fn run_custom(cmd: &str) -> String {
+    match tokio::process::Command::new("sh").args(["-c", cmd]).output().await {
+        Ok(o) if o.status.success() => {
+            String::from_utf8_lossy(&o.stdout).trim().to_string()
+        }
+        _ => String::new(),
+    }
 }
