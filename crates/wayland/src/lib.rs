@@ -287,12 +287,10 @@ impl Bar {
                 .width(Length::FillPortion(2))
                 .padding(pad),
             container(center)
-                .width(Length::FillPortion(1))
-                .center_x(Length::Fill)
+                .center_x(Length::FillPortion(1))
                 .padding(pad),
             container(right)
-                .width(Length::FillPortion(2))
-                .align_right(Length::Fill)
+                .align_right(Length::FillPortion(2))
                 .padding(pad),
         ]
         .width(Length::Fill)
