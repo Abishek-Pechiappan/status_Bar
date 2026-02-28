@@ -106,3 +106,13 @@ pub async fn fetch_workspaces(ipc: &HyprlandIpc) -> Result<Vec<WorkspaceInfo>> {
     serde_json::from_str(&raw)
         .map_err(|e| BarError::Ipc(format!("parse workspaces: {e}")))
 }
+
+/// Fetch the currently focused window title via `hyprctl activewindow -j`.
+///
+/// Returns `None` when no window is focused or the IPC call fails.
+pub async fn fetch_active_window(ipc: &HyprlandIpc) -> Option<String> {
+    let raw = ipc.command("j/activewindow").await.ok()?;
+    let val: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let title = val.get("title")?.as_str()?;
+    if title.is_empty() { None } else { Some(title.to_string()) }
+}

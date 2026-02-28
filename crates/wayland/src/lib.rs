@@ -11,7 +11,7 @@ use bar_core::{
     event::Message as AppMessage,
     state::{AppState, WorkspaceInfo},
 };
-use bar_ipc::{fetch_workspaces, HyprlandEvent, HyprlandIpc};
+use bar_ipc::{fetch_active_window, fetch_workspaces, HyprlandEvent, HyprlandIpc};
 use bar_theme::{Color as ThemeColor, Theme};
 use bar_widgets::{
     BatteryWidget, BrightnessWidget, ClockWidget, CpuWidget, CustomWidget, DiskWidget,
@@ -476,6 +476,11 @@ fn ipc_stream() -> impl iced::futures::Stream<Item = Message> {
             }
             Err(e) => warn!("Could not fetch initial workspaces: {e}"),
         }
+
+        // Fetch the active window title so the title widget shows immediately
+        // instead of showing "Desktop" until the next focus-change event.
+        let title = fetch_active_window(&ipc).await;
+        let _ = sender.try_send(Message::App(AppMessage::ActiveWindowChanged(title)));
 
         loop {
             match tokio::net::UnixStream::connect(ipc.event_socket()).await {

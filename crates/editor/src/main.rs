@@ -172,6 +172,8 @@ enum Message {
     DateFormatChanged(String),
     UseNerdIcons(bool),
     WidgetPadXChanged(f32),
+    WorkspaceStyle(bool),   // true = dots, false = numbers
+    WorkspaceShowAll(bool), // true = all, false = active only
     // Colour picker
     TogglePicker(ColorField),
     ColorGridPicked(String),
@@ -366,6 +368,11 @@ impl Editor {
                 self.config.theme.icon_style = if b { "nerd".to_string() } else { "ascii".to_string() };
             }
             Message::WidgetPadXChanged(v) => self.config.theme.widget_padding_x = v as u16,
+            Message::WorkspaceStyle(dots) => {
+                self.config.theme.workspace_style =
+                    if dots { "dots".to_string() } else { "numbers".to_string() };
+            }
+            Message::WorkspaceShowAll(all) => self.config.theme.workspace_show_all = all,
 
             // ── Colour picker ────────────────────────────────────────────────
             Message::TogglePicker(field) => {
@@ -686,6 +693,19 @@ impl Editor {
             if active { btn.style(iced::widget::button::primary).into() } else { btn.into() }
         };
 
+        let ws_dots   = t.workspace_style.to_lowercase() == "dots";
+        let ws_all    = t.workspace_show_all;
+        let ws_style_btn = |label: &'static str, dots: bool| -> Element<'_, Message> {
+            let active = ws_dots == dots;
+            let btn = button(text(label).size(13.0)).on_press(Message::WorkspaceStyle(dots));
+            if active { btn.style(iced::widget::button::primary).into() } else { btn.into() }
+        };
+        let ws_show_btn = |label: &'static str, all: bool| -> Element<'_, Message> {
+            let active = ws_all == all;
+            let btn = button(text(label).size(13.0)).on_press(Message::WorkspaceShowAll(all));
+            if active { btn.style(iced::widget::button::primary).into() } else { btn.into() }
+        };
+
         let picker_for = |field: ColorField| -> bool {
             self.active_picker == Some(field)
         };
@@ -706,6 +726,23 @@ impl Editor {
             labeled_row(
                 "Presets",
                 iced::widget::Row::from_vec(preset_btns).spacing(4).wrap(),
+            ),
+            // ── Workspace display ────────────────────────────────────────────
+            labeled_row(
+                "WS Style",
+                row![
+                    ws_style_btn("Numbers", false),
+                    ws_style_btn("Dots", true),
+                ]
+                .spacing(4),
+            ),
+            labeled_row(
+                "WS Visible",
+                row![
+                    ws_show_btn("All", true),
+                    ws_show_btn("Active Only", false),
+                ]
+                .spacing(4),
             ),
             // ── Icon style ───────────────────────────────────────────────────
             labeled_row(

@@ -54,12 +54,15 @@ pub fn parse_event(line: &str) -> HyprlandEvent {
                 name: name.trim().to_string(),
             })
         }
-        "activewindow" | "activewindowv2" => {
+        "activewindow" => {
             let mut parts = data.splitn(2, ',');
             let class = parts.next().unwrap_or("").trim().to_string();
             let title = parts.next().unwrap_or("").trim().to_string();
             HyprlandEvent::ActiveWindow(ActiveWindowEvent { class, title })
         }
+        // activewindowv2 only carries the window address — we already have the
+        // title from the preceding `activewindow` event, so ignore this one.
+        "activewindowv2" => HyprlandEvent::Unknown(line.to_string()),
         "fullscreen" => HyprlandEvent::Fullscreen(data.trim() == "1"),
         "monitoradded" | "monitorfocused" => {
             HyprlandEvent::MonitorFocused(data.trim().to_string())
