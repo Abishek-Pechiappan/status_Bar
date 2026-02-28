@@ -1,6 +1,8 @@
 # bar
 
-A production-grade, modular, Wayland-native status bar for Hyprland — written in Rust.
+> Vibe-coded a status bar because I wanted one I could actually customize without touching a config file every time.
+
+A Wayland-native status bar for Hyprland. Built in Rust, themed with Catppuccin out of the box, and ships with a **GUI editor** so you can drag widgets around, pick colors, and tweak spacing live — no TOML required.
 
 ```
 [1] [2] [3]   active_workspace   [window title]   [clock]   [↓ 1.2k ↑ 0.4k] [CPU 4%] [RAM 6.1/16G] [▓ 87%]

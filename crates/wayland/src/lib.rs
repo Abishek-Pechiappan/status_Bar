@@ -217,45 +217,70 @@ impl Bar {
 
     // ── View ──────────────────────────────────────────────────────────────────
 
+    /// Map a widget kind string to its rendered element.
+    ///
+    /// Returns `None` for optional sensor widgets when the sensor is
+    /// unavailable, and for unknown kind strings.
+    fn render_widget<'a>(&'a self, kind: &str) -> Option<Element<'a, AppMessage>> {
+        match kind {
+            "workspaces"  => Some(self.workspaces.view(&self.state, &self.theme)),
+            "title"       => Some(self.title.view(&self.state, &self.theme)),
+            "clock"       => Some(self.clock.view(&self.state, &self.theme)),
+            "cpu"         => Some(self.cpu.view(&self.state, &self.theme)),
+            "memory"      => Some(self.memory.view(&self.state, &self.theme)),
+            "network"     => Some(self.network.view(&self.state, &self.theme)),
+            "battery"     => self.battery.view(&self.state, &self.theme),
+            "disk"        => self.disk.view(&self.state, &self.theme),
+            "temperature" => self.temp.view(&self.state, &self.theme),
+            "volume"      => self.volume.view(&self.state, &self.theme),
+            "brightness"  => self.brightness.view(&self.state, &self.theme),
+            other => {
+                warn!("Unknown widget kind in config: {other}");
+                None
+            }
+        }
+    }
+
     fn view(&self) -> Element<'_, Message> {
         let gap    = self.theme.gap as f32;
         let pad    = self.theme.padding;
         let radius = self.theme.border_radius;
         let wbg    = self.theme.widget_bg;
 
-        // ── Left: workspaces + window title ──────────────────────────────────
-        let left = {
-            let ws    = pill_wrap(self.workspaces.view(&self.state, &self.theme).map(Message::App), radius, wbg);
-            let title = pill_wrap(self.title.view(&self.state, &self.theme).map(Message::App), radius, wbg);
-            row![ws, title].spacing(gap).align_y(iced::Alignment::Center)
-        };
-
-        // ── Center: clock ─────────────────────────────────────────────────────
-        let center = pill_wrap(self.clock.view(&self.state, &self.theme).map(Message::App), radius, wbg);
-
-        // ── Right: fixed widgets + optional sensor widgets ────────────────────
-        let net = pill_wrap(self.network.view(&self.state, &self.theme).map(Message::App), radius, wbg);
-        let cpu = pill_wrap(self.cpu.view(&self.state, &self.theme).map(Message::App), radius, wbg);
-        let mem = pill_wrap(self.memory.view(&self.state, &self.theme).map(Message::App), radius, wbg);
-
-        let mut right_items: Vec<Element<'_, Message>> = vec![net, cpu, mem];
-
-        // Sensor widgets are skipped entirely when the sensor isn't available.
-        let sensors: [Option<iced::Element<'_, AppMessage>>; 5] = [
-            self.disk.view(&self.state, &self.theme),
-            self.temp.view(&self.state, &self.theme),
-            self.volume.view(&self.state, &self.theme),
-            self.brightness.view(&self.state, &self.theme),
-            self.battery.view(&self.state, &self.theme),
-        ];
-        for elem in sensors.into_iter().flatten() {
-            right_items.push(pill_wrap(elem.map(Message::App), radius, wbg));
-        }
-
-        let right: Element<'_, Message> = iced::widget::Row::from_vec(right_items)
+        // Build each section dynamically from config — layout changes live-reload
+        // without a restart because ConfigReloaded updates self.config.
+        let left_items: Vec<Element<'_, Message>> = self.config.left
+            .iter()
+            .filter_map(|w| {
+                self.render_widget(&w.kind)
+                    .map(|e| pill_wrap(e.map(Message::App), radius, wbg))
+            })
+            .collect();
+        let left = iced::widget::Row::from_vec(left_items)
             .spacing(gap)
-            .align_y(iced::Alignment::Center)
-            .into();
+            .align_y(iced::Alignment::Center);
+
+        let center_items: Vec<Element<'_, Message>> = self.config.center
+            .iter()
+            .filter_map(|w| {
+                self.render_widget(&w.kind)
+                    .map(|e| pill_wrap(e.map(Message::App), radius, wbg))
+            })
+            .collect();
+        let center = iced::widget::Row::from_vec(center_items)
+            .spacing(gap)
+            .align_y(iced::Alignment::Center);
+
+        let right_items: Vec<Element<'_, Message>> = self.config.right
+            .iter()
+            .filter_map(|w| {
+                self.render_widget(&w.kind)
+                    .map(|e| pill_wrap(e.map(Message::App), radius, wbg))
+            })
+            .collect();
+        let right = iced::widget::Row::from_vec(right_items)
+            .spacing(gap)
+            .align_y(iced::Alignment::Center);
 
         let bar = row![
             container(left)

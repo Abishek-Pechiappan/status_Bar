@@ -6,9 +6,23 @@ height         = 40        # bar height in logical pixels
 position       = "top"     # "top" or "bottom"
 exclusive_zone = true      # reserve space so windows don't overlap the bar
 opacity        = 0.95
+margin         = 0         # horizontal gap from screen edges (floating bar)
+margin_top     = 0         # vertical gap from screen edge   (floating bar)
 
-# ── Widget layout ────────────────────────────────────────────────────────────
-# Available kinds: workspaces | clock | cpu | memory | network | title | battery
+# ── Widget layout ─────────────────────────────────────────────────────────────
+# Three sections: left · center · right
+# Available kinds:
+#   workspaces  — clickable Hyprland workspace buttons
+#   title       — active window title
+#   clock       — time and date
+#   cpu         — CPU usage %
+#   memory      — RAM used / total
+#   network     — download / upload rate
+#   battery     — battery level (auto-hidden on desktops)
+#   disk        — root filesystem usage (auto-hidden if unavailable)
+#   temperature — CPU temperature in °C (auto-hidden if no sensor)
+#   volume      — audio volume / mute state (requires wpctl)
+#   brightness  — screen brightness % (auto-hidden if no backlight)
 
 [[left]]
 kind = "workspaces"
@@ -31,7 +45,20 @@ kind = "memory"
 [[right]]
 kind = "battery"      # automatically hidden on desktops with no battery
 
-# ── Theme ────────────────────────────────────────────────────────────────────
+# Uncomment to enable sensor widgets:
+# [[right]]
+# kind = "disk"
+
+# [[right]]
+# kind = "temperature"
+
+# [[right]]
+# kind = "volume"
+
+# [[right]]
+# kind = "brightness"
+
+# ── Theme ─────────────────────────────────────────────────────────────────────
 [theme]
 background    = "#1e1e2e"   # Catppuccin Mocha — base
 foreground    = "#cdd6f4"   # Catppuccin Mocha — text
@@ -41,3 +68,12 @@ font_size     = 13.0
 border_radius = 6.0
 padding       = 8
 gap           = 4
+
+# widget_bg gives each widget a background so border_radius is visible.
+# Without this, pill/rounded shapes have no effect (nothing to round).
+widget_bg    = "#313244"   # Catppuccin Mocha — surface0  (comment out for no bg)
+border_color = ""          # bar border hex, empty = none
+border_width = 0           # bar border width in px
+
+clock_format = "%H:%M"     # strftime format for time
+date_format  = "%a %d %b"  # strftime format for date
