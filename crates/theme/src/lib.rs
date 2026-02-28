@@ -34,6 +34,8 @@ pub struct Theme {
     pub use_nerd_icons: bool,
     /// Horizontal inner padding applied inside each widget pill container.
     pub widget_pad_x:  u16,
+    /// Vertical inner padding applied inside each widget pill container.
+    pub widget_pad_y:  u16,
     /// When `true`, the workspace widget uses dots (●/○) instead of numbers.
     pub workspace_dots:     bool,
     /// When `true`, all open workspaces are shown; `false` = active only.
@@ -62,6 +64,7 @@ impl Theme {
             date_format:    cfg.date_format.clone(),
             use_nerd_icons:     cfg.icon_style.to_lowercase() != "ascii",
             widget_pad_x:       cfg.widget_padding_x,
+            widget_pad_y:       cfg.widget_padding_y,
             workspace_dots:     cfg.workspace_style.to_lowercase() == "dots",
             workspace_show_all: cfg.workspace_show_all,
         }

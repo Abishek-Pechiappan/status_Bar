@@ -142,6 +142,8 @@ pub struct ThemeConfig {
     pub icon_style: String,
     /// Horizontal inner padding for each widget pill container (pixels).
     pub widget_padding_x: u16,
+    /// Vertical inner padding for each widget pill container (pixels).
+    pub widget_padding_y: u16,
     /// Workspace display style: `"numbers"` shows workspace names/IDs;
     /// `"dots"` shows ● for active and ○ for inactive workspaces.
     pub workspace_style: String,
@@ -168,6 +170,7 @@ impl Default for ThemeConfig {
             date_format:       "%a %d %b".to_string(),
             icon_style:        "nerd".to_string(),
             widget_padding_x:  8,
+            widget_padding_y:  4,
             workspace_style:   "numbers".to_string(),
             workspace_show_all: true,
         }

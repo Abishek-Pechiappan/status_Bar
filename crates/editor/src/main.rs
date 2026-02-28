@@ -182,6 +182,7 @@ enum Message {
     DateFormatChanged(String),
     UseNerdIcons(bool),
     WidgetPadXChanged(f32),
+    WidgetPadYChanged(f32),
     WorkspaceStyle(bool),   // true = dots, false = numbers
     WorkspaceShowAll(bool), // true = all, false = active only
     // Colour picker
@@ -452,6 +453,7 @@ impl Editor {
                 self.config.theme.icon_style = if b { "nerd".to_string() } else { "ascii".to_string() };
             }
             Message::WidgetPadXChanged(v) => self.config.theme.widget_padding_x = v as u16,
+            Message::WidgetPadYChanged(v) => self.config.theme.widget_padding_y = v as u16,
             Message::WorkspaceStyle(dots) => {
                 self.config.theme.workspace_style =
                     if dots { "dots".to_string() } else { "numbers".to_string() };
@@ -880,12 +882,23 @@ impl Editor {
             ),
             // ── Widget pill padding ──────────────────────────────────────────
             labeled_row(
-                "Pill Padding",
+                "Pill Pad X",
                 row![
                     slider(0.0f32..=32.0, t.widget_padding_x as f32, Message::WidgetPadXChanged)
                         .step(1.0f32)
                         .width(200),
                     text(format!("{} px", t.widget_padding_x)).width(60),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            ),
+            labeled_row(
+                "Pill Pad Y",
+                row![
+                    slider(0.0f32..=20.0, t.widget_padding_y as f32, Message::WidgetPadYChanged)
+                        .step(1.0f32)
+                        .width(200),
+                    text(format!("{} px", t.widget_padding_y)).width(60),
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center),
