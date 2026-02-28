@@ -33,6 +33,17 @@ enum ShapePreset {
     Sharp,
 }
 
+// ── Color field identifiers (for the inline HSL picker) ───────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ColorField {
+    Background,
+    Foreground,
+    Accent,
+    WidgetBg,
+    BorderColor,
+}
+
 // ── Theme presets ─────────────────────────────────────────────────────────────
 
 struct ThemePreset {
@@ -129,6 +140,11 @@ struct Editor {
     border_color_buf:    String,
     clock_format_buf:    String,
     date_format_buf:     String,
+    // Inline HSL color picker state
+    active_picker:       Option<ColorField>,
+    picker_h:            f32,   // hue 0 – 360
+    picker_s:            f32,   // saturation 0 – 1
+    picker_l:            f32,   // lightness 0 – 1
 }
 
 // ── Messages ──────────────────────────────────────────────────────────────────
@@ -170,6 +186,11 @@ enum Message {
     UseNerdIcons(bool),
     WidgetPadXChanged(f32),
     WidgetPadYChanged(f32),
+    // Color picker
+    TogglePicker(ColorField),
+    PickerHue(f32),
+    PickerSat(f32),
+    PickerLit(f32),
     ApplyThemePreset(usize),
     ResetDefaults,
 
@@ -216,6 +237,10 @@ impl Editor {
                 border_color_buf,
                 clock_format_buf,
                 date_format_buf,
+                active_picker: None,
+                picker_h:      0.0,
+                picker_s:      0.5,
+                picker_l:      0.5,
             },
             Task::none(),
         )
@@ -263,6 +288,34 @@ impl Editor {
         self.border_color_buf = self.config.theme.border_color.clone();
         self.clock_format_buf = self.config.theme.clock_format.clone();
         self.date_format_buf  = self.config.theme.date_format.clone();
+        self.active_picker    = None; // close picker when presets/reset are applied
+    }
+
+    fn apply_picker_color(&mut self) {
+        let hex = hsl_to_hex(self.picker_h, self.picker_s, self.picker_l);
+        match self.active_picker {
+            Some(ColorField::Background) => {
+                self.bg_buf = hex.clone();
+                self.config.theme.background = hex;
+            }
+            Some(ColorField::Foreground) => {
+                self.fg_buf = hex.clone();
+                self.config.theme.foreground = hex;
+            }
+            Some(ColorField::Accent) => {
+                self.accent_buf = hex.clone();
+                self.config.theme.accent = hex;
+            }
+            Some(ColorField::WidgetBg) => {
+                self.widget_bg_buf = hex.clone();
+                self.config.theme.widget_bg = hex;
+            }
+            Some(ColorField::BorderColor) => {
+                self.border_color_buf = hex.clone();
+                self.config.theme.border_color = hex;
+            }
+            None => {}
+        }
     }
 }
 
@@ -278,7 +331,7 @@ impl Editor {
 
 impl Editor {
     fn update(&mut self, msg: Message) -> Task<Message> {
-        if !matches!(msg, Message::Save | Message::Tab(_)) {
+        if !matches!(msg, Message::Save | Message::Tab(_) | Message::TogglePicker(_)) {
             self.save_status = SaveStatus::Idle;
         }
 
@@ -367,6 +420,34 @@ impl Editor {
             }
             Message::WidgetPadXChanged(v) => self.config.theme.widget_padding_x = v as u16,
             Message::WidgetPadYChanged(v) => self.config.theme.widget_padding_y = v as u16,
+
+            // ── Color picker ─────────────────────────────────────────────────
+            Message::TogglePicker(field) => {
+                if self.active_picker == Some(field) {
+                    self.active_picker = None;
+                } else {
+                    let hex = match field {
+                        ColorField::Background  => self.config.theme.background.clone(),
+                        ColorField::Foreground  => self.config.theme.foreground.clone(),
+                        ColorField::Accent      => self.config.theme.accent.clone(),
+                        ColorField::WidgetBg    => self.config.theme.widget_bg.clone(),
+                        ColorField::BorderColor => self.config.theme.border_color.clone(),
+                    };
+                    if let Some((h, s, l)) = hex_to_hsl(&hex) {
+                        self.picker_h = h;
+                        self.picker_s = s;
+                        self.picker_l = l;
+                    } else {
+                        self.picker_h = 220.0;
+                        self.picker_s = 0.7;
+                        self.picker_l = 0.5;
+                    }
+                    self.active_picker = Some(field);
+                }
+            }
+            Message::PickerHue(v) => { self.picker_h = v; self.apply_picker_color(); }
+            Message::PickerSat(v) => { self.picker_s = v; self.apply_picker_color(); }
+            Message::PickerLit(v) => { self.picker_l = v; self.apply_picker_color(); }
 
             Message::ApplyThemePreset(idx) => {
                 if let Some(p) = THEME_PRESETS.get(idx) {
@@ -671,6 +752,13 @@ impl Editor {
             if active { btn.style(iced::widget::button::primary).into() } else { btn.into() }
         };
 
+        let ph = self.picker_h;
+        let ps = self.picker_s;
+        let pl = self.picker_l;
+        let picker_for = |field: ColorField| -> Option<(f32, f32, f32)> {
+            if self.active_picker == Some(field) { Some((ph, ps, pl)) } else { None }
+        };
+
         // Build theme preset buttons
         let preset_btns: Vec<Element<'_, Message>> = THEME_PRESETS
             .iter()
@@ -734,11 +822,16 @@ impl Editor {
                 .align_y(Alignment::Center),
             ),
             // ── Colors ────────────────────────────────────────────────────────
-            color_input("Background",    &self.bg_buf,           &t.background,   Message::BgChanged),
-            color_input("Foreground",    &self.fg_buf,           &t.foreground,   Message::FgChanged),
-            color_input("Accent",        &self.accent_buf,       &t.accent,       Message::AccentChanged),
-            color_input_optional("Widget BG",     &self.widget_bg_buf,    &t.widget_bg,    Message::WidgetBgChanged),
-            color_input_optional("Border Color",  &self.border_color_buf, &t.border_color, Message::BorderColorChanged),
+            color_input("Background",  &self.bg_buf,        &t.background,   Message::BgChanged,
+                ColorField::Background, picker_for(ColorField::Background)),
+            color_input("Foreground",  &self.fg_buf,        &t.foreground,   Message::FgChanged,
+                ColorField::Foreground, picker_for(ColorField::Foreground)),
+            color_input("Accent",      &self.accent_buf,    &t.accent,       Message::AccentChanged,
+                ColorField::Accent, picker_for(ColorField::Accent)),
+            color_input_optional("Widget BG",    &self.widget_bg_buf,    &t.widget_bg,    Message::WidgetBgChanged,
+                ColorField::WidgetBg, picker_for(ColorField::WidgetBg)),
+            color_input_optional("Border Color", &self.border_color_buf, &t.border_color, Message::BorderColorChanged,
+                ColorField::BorderColor, picker_for(ColorField::BorderColor)),
             // ── Border width ─────────────────────────────────────────────────
             labeled_row(
                 "Border Width",
@@ -872,6 +965,8 @@ fn color_input<'a>(
     buf: &'a str,
     config_val: &'a str,
     on_change: fn(String) -> Message,
+    field: ColorField,
+    picker: Option<(f32, f32, f32)>,
 ) -> Element<'a, Message> {
     let swatch_color = parse_hex(config_val).unwrap_or(Color::BLACK);
 
@@ -880,28 +975,59 @@ fn color_input<'a>(
         .height(Length::Fixed(24.0))
         .style(move |_: &iced::Theme| iced::widget::container::Style {
             background: Some(iced::Background::Color(swatch_color)),
-            border: iced::Border {
-                radius: 4.0.into(),
-                ..Default::default()
-            },
+            border: iced::Border { radius: 4.0.into(), ..Default::default() },
             ..Default::default()
         });
 
     let valid = is_valid_hex(buf);
-    let input = text_input("#rrggbb", buf)
-        .on_input(on_change)
-        .width(110);
+    let input = text_input("#rrggbb", buf).on_input(on_change).width(110);
 
-    labeled_row(
+    let pick_icon = if picker.is_some() { "▲" } else { "▼" };
+    let pick_btn = button(text(pick_icon).size(11.0))
+        .on_press(Message::TogglePicker(field));
+
+    let main_row = labeled_row(
         label,
-        row![
-            swatch,
-            input,
-            text(if valid { "" } else { "invalid" }),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center),
-    )
+        row![swatch, input, text(if valid { "" } else { "invalid" }), pick_btn]
+            .spacing(8)
+            .align_y(Alignment::Center),
+    );
+
+    if let Some((h, s, l)) = picker {
+        let preview_color = swatch_color;
+        let picker_content = column![
+            row![
+                text("H").width(14).size(12.0),
+                slider(0.0f32..=360.0, h, Message::PickerHue).step(1.0).width(185),
+                text(format!("{h:.0}°")).width(38).size(12.0),
+            ].spacing(4).align_y(Alignment::Center),
+            row![
+                text("S").width(14).size(12.0),
+                slider(0.0f32..=1.0, s, Message::PickerSat).step(0.01).width(185),
+                text(format!("{:.0}%", s * 100.0)).width(38).size(12.0),
+            ].spacing(4).align_y(Alignment::Center),
+            row![
+                text("L").width(14).size(12.0),
+                slider(0.0f32..=1.0, l, Message::PickerLit).step(0.01).width(185),
+                text(format!("{:.0}%", l * 100.0)).width(38).size(12.0),
+            ].spacing(4).align_y(Alignment::Center),
+            container(text(""))
+                .width(Length::Fixed(240.0))
+                .height(Length::Fixed(18.0))
+                .style(move |_: &iced::Theme| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(preview_color)),
+                    border: iced::Border { radius: 4.0.into(), ..Default::default() },
+                    ..Default::default()
+                }),
+        ].spacing(4);
+        let picker_row = labeled_row("", picker_content);
+        let mut col = iced::widget::Column::new().spacing(4);
+        col = col.push(main_row);
+        col = col.push(picker_row);
+        col.into()
+    } else {
+        main_row
+    }
 }
 
 /// Like `color_input` but allows an empty string (meaning "disabled / none").
@@ -910,6 +1036,8 @@ fn color_input_optional<'a>(
     buf: &'a str,
     config_val: &'a str,
     on_change: fn(String) -> Message,
+    field: ColorField,
+    picker: Option<(f32, f32, f32)>,
 ) -> Element<'a, Message> {
     let swatch_color = parse_hex(config_val).unwrap_or(Color::from_rgba8(0, 0, 0, 0.0));
 
@@ -926,28 +1054,55 @@ fn color_input_optional<'a>(
             ..Default::default()
         });
 
-    let hint = if buf.is_empty() {
-        "none"
-    } else if is_valid_hex(buf) {
-        ""
-    } else {
-        "invalid"
-    };
+    let hint = if buf.is_empty() { "none" } else if is_valid_hex(buf) { "" } else { "invalid" };
+    let input = text_input("#rrggbb or empty", buf).on_input(on_change).width(110);
 
-    let input = text_input("#rrggbb or empty", buf)
-        .on_input(on_change)
-        .width(110);
+    let pick_icon = if picker.is_some() { "▲" } else { "▼" };
+    let pick_btn = button(text(pick_icon).size(11.0))
+        .on_press(Message::TogglePicker(field));
 
-    labeled_row(
+    let main_row = labeled_row(
         label,
-        row![
-            swatch,
-            input,
-            text(hint),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center),
-    )
+        row![swatch, input, text(hint), pick_btn]
+            .spacing(8)
+            .align_y(Alignment::Center),
+    );
+
+    if let Some((h, s, l)) = picker {
+        let preview_color = swatch_color;
+        let picker_content = column![
+            row![
+                text("H").width(14).size(12.0),
+                slider(0.0f32..=360.0, h, Message::PickerHue).step(1.0).width(185),
+                text(format!("{h:.0}°")).width(38).size(12.0),
+            ].spacing(4).align_y(Alignment::Center),
+            row![
+                text("S").width(14).size(12.0),
+                slider(0.0f32..=1.0, s, Message::PickerSat).step(0.01).width(185),
+                text(format!("{:.0}%", s * 100.0)).width(38).size(12.0),
+            ].spacing(4).align_y(Alignment::Center),
+            row![
+                text("L").width(14).size(12.0),
+                slider(0.0f32..=1.0, l, Message::PickerLit).step(0.01).width(185),
+                text(format!("{:.0}%", l * 100.0)).width(38).size(12.0),
+            ].spacing(4).align_y(Alignment::Center),
+            container(text(""))
+                .width(Length::Fixed(240.0))
+                .height(Length::Fixed(18.0))
+                .style(move |_: &iced::Theme| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(preview_color)),
+                    border: iced::Border { radius: 4.0.into(), ..Default::default() },
+                    ..Default::default()
+                }),
+        ].spacing(4);
+        let picker_row = labeled_row("", picker_content);
+        let mut col = iced::widget::Column::new().spacing(4);
+        col = col.push(main_row);
+        col = col.push(picker_row);
+        col.into()
+    } else {
+        main_row
+    }
 }
 
 // ── Pure helpers ──────────────────────────────────────────────────────────────
@@ -966,6 +1121,60 @@ fn parse_hex(s: &str) -> Option<Color> {
 
 fn is_valid_hex(s: &str) -> bool {
     parse_hex(s).is_some()
+}
+
+/// Convert a `#rrggbb` hex string to HSL (H: 0–360, S: 0–1, L: 0–1).
+/// Returns `None` when the hex is invalid or empty.
+fn hex_to_hsl(hex: &str) -> Option<(f32, f32, f32)> {
+    let c = parse_hex(hex)?;
+    let (r, g, b) = (c.r, c.g, c.b);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = (max + min) / 2.0;
+
+    if (max - min).abs() < 1e-6 {
+        return Some((0.0, 0.0, l));
+    }
+
+    let d = max - min;
+    let s = if l > 0.5 { d / (2.0 - max - min) } else { d / (max + min) };
+
+    let h = if (max - r).abs() < 1e-6 {
+        ((g - b) / d + if g < b { 6.0 } else { 0.0 }) / 6.0
+    } else if (max - g).abs() < 1e-6 {
+        ((b - r) / d + 2.0) / 6.0
+    } else {
+        ((r - g) / d + 4.0) / 6.0
+    };
+
+    Some((h * 360.0, s, l))
+}
+
+/// Convert HSL (H: 0–360, S: 0–1, L: 0–1) to a `#rrggbb` hex string.
+fn hsl_to_hex(h: f32, s: f32, l: f32) -> String {
+    if s < 1e-6 {
+        let v = (l * 255.0).round() as u8;
+        return format!("#{v:02x}{v:02x}{v:02x}");
+    }
+
+    fn hue_to_rgb(p: f32, q: f32, mut t: f32) -> f32 {
+        if t < 0.0 { t += 1.0; }
+        if t > 1.0 { t -= 1.0; }
+        if t < 1.0 / 6.0 { return p + (q - p) * 6.0 * t; }
+        if t < 0.5 { return q; }
+        if t < 2.0 / 3.0 { return p + (q - p) * (2.0 / 3.0 - t) * 6.0; }
+        p
+    }
+
+    let hn = h / 360.0;
+    let q = if l < 0.5 { l * (1.0 + s) } else { l + s - l * s };
+    let p = 2.0 * l - q;
+
+    let r = (hue_to_rgb(p, q, hn + 1.0 / 3.0) * 255.0).round() as u8;
+    let g = (hue_to_rgb(p, q, hn) * 255.0).round() as u8;
+    let b = (hue_to_rgb(p, q, hn - 1.0 / 3.0) * 255.0).round() as u8;
+
+    format!("#{r:02x}{g:02x}{b:02x}")
 }
 
 fn save_config(config: &BarConfig, path: &std::path::Path) -> Result<(), String> {
