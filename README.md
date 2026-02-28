@@ -47,7 +47,7 @@ A production-grade, modular, Wayland-native status bar for Hyprland — written 
 ### Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hyrostrix/bar/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Abishek-Pechiappan/status_Bar/main/install.sh | bash
 ```
 
 That's it. The script clones the repo, builds, installs `bar` and `bar-editor` to `~/.local/bin`, copies the example config, and installs a `bar-update` command for future updates.

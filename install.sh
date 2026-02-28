@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_URL="https://github.com/hyrostrix/bar"
+REPO_URL="https://github.com/Abishek-Pechiappan/status_Bar"
 INSTALL_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/bar"
 BIN_DIR="$HOME/.local/bin"
 CFG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/bar"
