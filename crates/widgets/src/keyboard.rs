@@ -1,10 +1,14 @@
 use bar_core::{event::Message, state::AppState};
 use bar_theme::Theme;
-use iced::{widget::text, Element};
+use iced::{
+    mouse::ScrollDelta,
+    widget::{mouse_area, text},
+    Element,
+};
 
 /// Displays the active Hyprland keyboard layout.
 ///
-/// Updated via the `activelayout` IPC event.
+/// Interactive: scroll to cycle through available layouts.
 /// Hidden until the first layout event is received.
 #[derive(Debug, Default)]
 pub struct KeyboardWidget;
@@ -23,9 +27,16 @@ impl KeyboardWidget {
         if state.keyboard_layout.is_empty() {
             return None;
         }
+        let content = text(format!("󰌌 {}", state.keyboard_layout)).size(theme.font_size);
+
         Some(
-            text(format!("󰌌 {}", state.keyboard_layout))
-                .size(theme.font_size)
+            mouse_area(content)
+                .on_scroll(|delta| {
+                    let y = match delta {
+                        ScrollDelta::Lines { y, .. } | ScrollDelta::Pixels { y, .. } => y,
+                    };
+                    if y > 0.0 { Message::KeyboardLayoutNext } else { Message::KeyboardLayoutPrev }
+                })
                 .into(),
         )
     }

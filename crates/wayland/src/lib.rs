@@ -305,6 +305,29 @@ impl Bar {
                 );
             }
 
+            AppMessage::KeyboardLayoutNext => {
+                return Task::perform(
+                    async {
+                        let _ = tokio::process::Command::new("hyprctl")
+                            .args(["switchxkblayout", "all", "next"])
+                            .output()
+                            .await;
+                    },
+                    |_| Message::Tick,
+                );
+            }
+            AppMessage::KeyboardLayoutPrev => {
+                return Task::perform(
+                    async {
+                        let _ = tokio::process::Command::new("hyprctl")
+                            .args(["switchxkblayout", "all", "prev"])
+                            .output()
+                            .await;
+                    },
+                    |_| Message::Tick,
+                );
+            }
+
             AppMessage::Tick | AppMessage::Shutdown => {}
         }
         Task::none()

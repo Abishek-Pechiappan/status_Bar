@@ -42,10 +42,14 @@ pub enum Message {
     BrightnessAdjust(i32),
     /// Click on media widget — play/pause.
     MediaPlayPause,
-    /// Next track.
+    /// Scroll up on media widget — skip to next track.
     MediaNext,
-    /// Previous track.
+    /// Scroll down on media widget — go to previous track.
     MediaPrev,
+    /// Scroll up on keyboard widget — switch to next layout.
+    KeyboardLayoutNext,
+    /// Scroll down on keyboard widget — switch to previous layout.
+    KeyboardLayoutPrev,
 
     // ── Internal ──────────────────────────────────────────────────────────────
     /// One-second timer tick — used to update the clock.

@@ -1,6 +1,7 @@
 use bar_core::{event::Message, state::AppState};
 use bar_theme::Theme;
 use iced::{
+    mouse::ScrollDelta,
     widget::{mouse_area, text},
     Element,
 };
@@ -50,6 +51,12 @@ impl MediaWidget {
         Some(
             mouse_area(text(label).size(theme.font_size))
                 .on_press(Message::MediaPlayPause)
+                .on_scroll(|delta| {
+                    let y = match delta {
+                        ScrollDelta::Lines { y, .. } | ScrollDelta::Pixels { y, .. } => y,
+                    };
+                    if y > 0.0 { Message::MediaNext } else { Message::MediaPrev }
+                })
                 .into(),
         )
     }
