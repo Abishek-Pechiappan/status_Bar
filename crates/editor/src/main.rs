@@ -10,6 +10,7 @@ const ALL_WIDGETS: &[&str] = &[
     "cpu", "memory", "network", "battery",
     "disk", "temperature", "volume", "brightness",
     "swap", "uptime", "load", "keyboard", "media", "custom",
+    "separator",
 ];
 
 fn main() -> iced::Result {
@@ -45,11 +46,20 @@ struct ThemePreset {
 }
 
 const THEME_PRESETS: &[ThemePreset] = &[
-    ThemePreset { name: "Catppuccin Mocha", background: "#1e1e2e", foreground: "#cdd6f4", accent: "#cba6f7" },
-    ThemePreset { name: "Catppuccin Latte", background: "#eff1f5", foreground: "#4c4f69", accent: "#8839ef" },
-    ThemePreset { name: "Gruvbox Dark",     background: "#282828", foreground: "#ebdbb2", accent: "#fabd2f" },
-    ThemePreset { name: "Tokyo Night",      background: "#1a1b26", foreground: "#c0caf5", accent: "#7aa2f7" },
-    ThemePreset { name: "Nord",             background: "#2e3440", foreground: "#eceff4", accent: "#88c0d0" },
+    ThemePreset { name: "Catppuccin Mocha",  background: "#1e1e2e", foreground: "#cdd6f4", accent: "#cba6f7" },
+    ThemePreset { name: "Catppuccin Latte",  background: "#eff1f5", foreground: "#4c4f69", accent: "#8839ef" },
+    ThemePreset { name: "Catppuccin Frappe", background: "#303446", foreground: "#c6d0f5", accent: "#ca9ee6" },
+    ThemePreset { name: "Gruvbox Dark",      background: "#282828", foreground: "#ebdbb2", accent: "#fabd2f" },
+    ThemePreset { name: "Gruvbox Light",     background: "#fbf1c7", foreground: "#3c3836", accent: "#d79921" },
+    ThemePreset { name: "Tokyo Night",       background: "#1a1b26", foreground: "#c0caf5", accent: "#7aa2f7" },
+    ThemePreset { name: "Nord",              background: "#2e3440", foreground: "#eceff4", accent: "#88c0d0" },
+    ThemePreset { name: "Dracula",           background: "#282a36", foreground: "#f8f8f2", accent: "#bd93f9" },
+    ThemePreset { name: "Rose Pine",         background: "#191724", foreground: "#e0def4", accent: "#c4a7e7" },
+    ThemePreset { name: "Rose Pine Dawn",    background: "#faf4ed", foreground: "#575279", accent: "#907aa9" },
+    ThemePreset { name: "One Dark",          background: "#282c34", foreground: "#abb2bf", accent: "#61afef" },
+    ThemePreset { name: "Solarized Dark",    background: "#002b36", foreground: "#839496", accent: "#268bd2" },
+    ThemePreset { name: "Everforest Dark",   background: "#2d353b", foreground: "#d3c6aa", accent: "#a7c080" },
+    ThemePreset { name: "Kanagawa",          background: "#1f1f28", foreground: "#dcd7ba", accent: "#7e9cd8" },
 ];
 
 // ── Save status ───────────────────────────────────────────────────────────────
@@ -191,6 +201,7 @@ enum Message {
     PickerSat(f32),
     PickerAlpha(f32),
     ApplyThemePreset(usize),
+    ImportWal,
     ResetDefaults,
 
     // Actions
@@ -500,6 +511,19 @@ impl Editor {
                     self.config.theme.foreground = p.foreground.to_string();
                     self.config.theme.accent     = p.accent.to_string();
                     self.sync_bufs();
+                }
+            }
+
+            Message::ImportWal => {
+                if let Some((bg, fg, ac)) = load_wal_colors() {
+                    self.config.theme.background = bg;
+                    self.config.theme.foreground = fg;
+                    self.config.theme.accent     = ac;
+                    self.sync_bufs();
+                } else {
+                    self.save_status = SaveStatus::Error(
+                        "~/.cache/wal/colors.json not found or invalid".to_string()
+                    );
                 }
             }
 
@@ -849,7 +873,18 @@ impl Editor {
             // ── Theme presets ─────────────────────────────────────────────────
             labeled_row(
                 "Presets",
-                iced::widget::Row::from_vec(preset_btns).spacing(4).wrap(),
+                column![
+                    iced::widget::Row::from_vec(preset_btns).spacing(4).wrap(),
+                    row![
+                        button(text("⬇ Import pywal").size(12.0))
+                            .on_press(Message::ImportWal),
+                        text("Imports ~/.cache/wal/colors.json").size(11.0)
+                            .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                ]
+                .spacing(6),
             ),
             // ── Workspace display ────────────────────────────────────────────
             labeled_row(
@@ -1284,6 +1319,32 @@ fn hsv_to_rgb(h: f32, s: f32, v: f32) -> (u8, u8, u8) {
     ((r * 255.0).round() as u8, (g * 255.0).round() as u8, (b * 255.0).round() as u8)
 }
 
+
+/// Read `~/.cache/wal/colors.json` and return `(background, foreground, accent)` hex strings.
+fn load_wal_colors() -> Option<(String, String, String)> {
+    let home  = std::env::var("HOME").ok()?;
+    let path  = std::path::Path::new(&home).join(".cache/wal/colors.json");
+    let text  = std::fs::read_to_string(path).ok()?;
+    // Minimal parse — just extract the values we care about without pulling in serde_json.
+    // Expected keys: "special": { "background": "#...", "foreground": "#..." }
+    //                "colors":  { "color1": "#..." }
+    let bg = extract_json_string(&text, "background")?;
+    let fg = extract_json_string(&text, "foreground")?;
+    // Use color1 as accent (first non-background colour in a pywal palette is usually the accent).
+    let ac = extract_json_string(&text, "color1")?;
+    Some((bg, fg, ac))
+}
+
+/// Naive key lookup in a JSON string — finds the first `"key": "#value"` pair.
+fn extract_json_string(json: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{key}\"");
+    let start  = json.find(&needle)? + needle.len();
+    let after  = json[start..].trim_start();
+    let after  = after.strip_prefix(':')?.trim_start();
+    let after  = after.strip_prefix('"')?;
+    let end    = after.find('"')?;
+    Some(after[..end].to_string())
+}
 
 fn save_config(config: &BarConfig, path: &std::path::Path) -> Result<(), String> {
     let toml_str = toml::to_string_pretty(config)

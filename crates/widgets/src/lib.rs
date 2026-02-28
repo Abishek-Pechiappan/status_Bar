@@ -1,5 +1,6 @@
 pub mod battery;
 pub mod brightness;
+pub mod separator;
 pub mod clock;
 pub mod cpu;
 pub mod custom;
@@ -27,6 +28,7 @@ pub use load::LoadWidget;
 pub use media::MediaWidget;
 pub use memory::MemoryWidget;
 pub use network::NetworkWidget;
+pub use separator::SeparatorWidget;
 pub use swap::SwapWidget;
 pub use temperature::TempWidget;
 pub use title::TitleWidget;

@@ -15,8 +15,8 @@ use bar_ipc::{fetch_active_window, fetch_workspaces, HyprlandEvent, HyprlandIpc}
 use bar_theme::{Color as ThemeColor, Theme};
 use bar_widgets::{
     BatteryWidget, BrightnessWidget, ClockWidget, CpuWidget, CustomWidget, DiskWidget,
-    KeyboardWidget, LoadWidget, MediaWidget, MemoryWidget, NetworkWidget, SwapWidget, TempWidget,
-    TitleWidget, UptimeWidget, VolumeWidget, WorkspaceWidget,
+    KeyboardWidget, LoadWidget, MediaWidget, MemoryWidget, NetworkWidget, SeparatorWidget,
+    SwapWidget, TempWidget, TitleWidget, UptimeWidget, VolumeWidget, WorkspaceWidget,
 };
 use chrono::Local;
 use futures::channel::mpsc::Sender;
@@ -114,6 +114,7 @@ struct Bar {
     keyboard:   KeyboardWidget,
     media:      MediaWidget,
     custom:     CustomWidget,
+    separator:  SeparatorWidget,
 }
 
 impl Bar {
@@ -142,6 +143,7 @@ impl Bar {
             keyboard:   KeyboardWidget::new(),
             media:      MediaWidget::new(),
             custom:     CustomWidget::new(),
+            separator:  SeparatorWidget::new(),
         };
 
         let init_task = Task::perform(
@@ -354,6 +356,7 @@ impl Bar {
             "keyboard"    => self.keyboard.view(&self.state, &self.theme),
             "media"       => self.media.view(&self.state, &self.theme),
             "custom"      => self.custom.view(&self.state, &self.theme),
+            "separator"   => Some(self.separator.view(&self.state, &self.theme)),
             other => {
                 warn!("Unknown widget kind in config: {other}");
                 None
