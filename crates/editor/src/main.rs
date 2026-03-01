@@ -632,21 +632,27 @@ impl Editor {
         // ── Sidebar ───────────────────────────────────────────────────────────
         let sidebar: Element<'_, Message> = container(
             column![
-                text("bar editor")
-                    .size(13.0)
-                    .color(Color::from_rgb8(0xcb, 0xa6, 0xf7)),
+                column![
+                    text("Bar Editor")
+                        .size(15.0)
+                        .color(Color::from_rgb8(0xcb, 0xa6, 0xf7)),
+                    text("status bar config")
+                        .size(10.0)
+                        .color(Color::from_rgb8(0x45, 0x47, 0x5a)),
+                ]
+                .spacing(2),
                 rule::horizontal(1.0f32),
-                nav_item("⚙  Global", Section::Global, self.section),
-                nav_item("⊞  Layout", Section::Layout, self.section),
-                nav_item("◈  Theme",  Section::Theme,  self.section),
+                nav_item("  Global", Section::Global, self.section),
+                nav_item("  Layout", Section::Layout, self.section),
+                nav_item("  Theme",  Section::Theme,  self.section),
             ]
-            .spacing(4)
-            .padding([12, 8]),
+            .spacing(6)
+            .padding([14, 10]),
         )
         .width(Length::Fixed(168.0))
         .height(Length::Fill)
         .style(|_: &iced::Theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(Color::from_rgb8(0x0f, 0x0f, 0x17))),
+            background: Some(iced::Background::Color(Color::from_rgb8(0x0d, 0x0d, 0x15))),
             ..Default::default()
         })
         .into();
@@ -702,8 +708,22 @@ impl Editor {
 
         let footer: Element<'_, Message> = container(
             row![
-                button(text("Save").size(13.0)).on_press(Message::Save),
-                button(text("Reset").size(13.0))
+                button(text("Save").size(13.0).color(Color::from_rgb8(0x1e, 0x1e, 0x2e)))
+                    .on_press(Message::Save)
+                    .padding([6, 20])
+                    .style(|_: &iced::Theme, status| iced::widget::button::Style {
+                        background: Some(iced::Background::Color(
+                            if status == iced::widget::button::Status::Hovered {
+                                Color::from_rgb8(0xd8, 0xb5, 0xff)
+                            } else {
+                                Color::from_rgb8(0xcb, 0xa6, 0xf7)
+                            }
+                        )),
+                        border: iced::Border { radius: 6.0.into(), ..Default::default() },
+                        text_color: Color::from_rgb8(0x1e, 0x1e, 0x2e),
+                        ..Default::default()
+                    }),
+                button(text("Reset").size(12.0))
                     .on_press(Message::ResetDefaults)
                     .style(iced::widget::button::danger),
                 text(format!("  {}", self.config_path.display()))
@@ -714,7 +734,7 @@ impl Editor {
             .spacing(8)
             .align_y(Alignment::Center),
         )
-        .padding([6, 12])
+        .padding([7, 12])
         .into();
 
         // ── Root ──────────────────────────────────────────────────────────────
@@ -730,7 +750,7 @@ impl Editor {
         .width(Length::Fill)
         .height(Length::Fill)
         .style(|_: &iced::Theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(Color::from_rgb8(0x16, 0x16, 0x21))),
+            background: Some(iced::Background::Color(Color::from_rgb8(0x13, 0x13, 0x1e))),
             ..Default::default()
         })
         .into()
@@ -830,15 +850,44 @@ impl Editor {
         .width(Length::Fill);
 
         for (i, w) in widgets.iter().enumerate() {
+            let kind_chip: Element<'_, Message> = container(
+                text(&w.kind).size(12.0).color(Color::from_rgb8(0xcd, 0xd6, 0xf4))
+            )
+            .padding([4, 10])
+            .width(Length::Fill)
+            .style(|_: &iced::Theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(Color::from_rgba8(0x45, 0x47, 0x5a, 0.28))),
+                border: iced::Border { radius: 5.0.into(), ..Default::default() },
+                ..Default::default()
+            })
+            .into();
+
+            let move_btn_style = |_: &iced::Theme, _| iced::widget::button::Style {
+                background: Some(iced::Background::Color(Color::from_rgba8(0x45, 0x47, 0x5a, 0.35))),
+                border: iced::Border { radius: 4.0.into(), ..Default::default() },
+                text_color: Color::from_rgb8(0x9f, 0xa2, 0xb5),
+                ..Default::default()
+            };
+
             let row_el: Element<'_, Message> = row![
-                text(&w.kind).width(Length::Fill),
-                button(text("↑")).on_press_maybe(
-                    (i > 0).then(|| Message::MoveUp { side, i })
-                ),
-                button(text("↓")).on_press_maybe(
-                    (i + 1 < len).then(|| Message::MoveDown { side, i })
-                ),
-                button(text("×")).on_press(Message::Remove { side, i }),
+                kind_chip,
+                button(text("↑").size(12.0))
+                    .on_press_maybe((i > 0).then(|| Message::MoveUp { side, i }))
+                    .padding([4, 8])
+                    .style(move_btn_style),
+                button(text("↓").size(12.0))
+                    .on_press_maybe((i + 1 < len).then(|| Message::MoveDown { side, i }))
+                    .padding([4, 8])
+                    .style(move_btn_style),
+                button(text("×").size(12.0).color(Color::from_rgb8(0xf3, 0x8b, 0xa8)))
+                    .on_press(Message::Remove { side, i })
+                    .padding([4, 8])
+                    .style(|_: &iced::Theme, _| iced::widget::button::Style {
+                        background: Some(iced::Background::Color(Color::from_rgba8(0xf3, 0x8b, 0xa8, 0.14))),
+                        border: iced::Border { radius: 4.0.into(), ..Default::default() },
+                        text_color: Color::from_rgb8(0xf3, 0x8b, 0xa8),
+                        ..Default::default()
+                    }),
             ]
             .spacing(4)
             .align_y(Alignment::Center)
@@ -915,46 +964,39 @@ impl Editor {
         let t = &self.config.theme;
         let muted = Color::from_rgb8(0x58, 0x5b, 0x70);
 
-        // ── Toggle button helpers ─────────────────────────────────────────────
+        // ── Toggle chip helpers ───────────────────────────────────────────────
         let ws_dots = t.workspace_style.to_lowercase() == "dots";
         let ws_all  = t.workspace_show_all;
-        let ws_style_btn = |label: &'static str, dots: bool| -> Element<'_, Message> {
-            let btn = button(text(label).size(13.0)).on_press(Message::WorkspaceStyle(dots));
-            if ws_dots == dots { btn.style(iced::widget::button::primary).into() } else { btn.into() }
+        let ws_style_btn = |label: &'static str, dots: bool| -> Element<'static, Message> {
+            toggle_chip(label, ws_dots == dots, Message::WorkspaceStyle(dots))
         };
-        let ws_show_btn = |label: &'static str, all: bool| -> Element<'_, Message> {
-            let btn = button(text(label).size(13.0)).on_press(Message::WorkspaceShowAll(all));
-            if ws_all == all { btn.style(iced::widget::button::primary).into() } else { btn.into() }
+        let ws_show_btn = |label: &'static str, all: bool| -> Element<'static, Message> {
+            toggle_chip(label, ws_all == all, Message::WorkspaceShowAll(all))
         };
 
         let nerd = t.icon_style.to_lowercase() != "ascii";
-        let icon_btn = |label: &'static str, use_nerd: bool| -> Element<'_, Message> {
-            let btn = button(text(label).size(13.0)).on_press(Message::UseNerdIcons(use_nerd));
-            if nerd == use_nerd { btn.style(iced::widget::button::primary).into() } else { btn.into() }
+        let icon_btn = |label: &'static str, use_nerd: bool| -> Element<'static, Message> {
+            toggle_chip(label, nerd == use_nerd, Message::UseNerdIcons(use_nerd))
         };
 
         let clock_24h = t.clock_format.contains("%H");
-        let clock_btn = |label: &'static str, is24: bool| -> Element<'_, Message> {
-            let btn = button(text(label).size(13.0)).on_press(Message::ClockFormatPreset(is24));
-            if clock_24h == is24 { btn.style(iced::widget::button::primary).into() } else { btn.into() }
+        let clock_btn = |label: &'static str, is24: bool| -> Element<'static, Message> {
+            toggle_chip(label, clock_24h == is24, Message::ClockFormatPreset(is24))
         };
 
         let toks: Vec<&str> = t.network_show.split(',').map(str::trim).collect();
         let (ns, nn, nsi) = (toks.contains(&"speed"), toks.contains(&"name"), toks.contains(&"signal"));
-        let net_btn = |label: &'static str, active: bool, msg: Message| -> Element<'_, Message> {
-            let btn = button(text(label).size(13.0)).on_press(msg);
-            if active { btn.style(iced::widget::button::primary).into() } else { btn.into() }
+        let net_btn = |label: &'static str, active: bool, msg: Message| -> Element<'static, Message> {
+            toggle_chip(label, active, msg)
         };
 
         let vol_slider_on  = t.volume_show_slider;
-        let vol_btn = |label: &'static str, on: bool| -> Element<'_, Message> {
-            let btn = button(text(label).size(13.0)).on_press(Message::VolumeShowSlider(on));
-            if vol_slider_on == on { btn.style(iced::widget::button::primary).into() } else { btn.into() }
+        let vol_btn = |label: &'static str, on: bool| -> Element<'static, Message> {
+            toggle_chip(label, vol_slider_on == on, Message::VolumeShowSlider(on))
         };
         let brt_slider_on  = t.brightness_show_slider;
-        let brt_btn = |label: &'static str, on: bool| -> Element<'_, Message> {
-            let btn = button(text(label).size(13.0)).on_press(Message::BrightnessShowSlider(on));
-            if brt_slider_on == on { btn.style(iced::widget::button::primary).into() } else { btn.into() }
+        let brt_btn = |label: &'static str, on: bool| -> Element<'static, Message> {
+            toggle_chip(label, brt_slider_on == on, Message::BrightnessShowSlider(on))
         };
 
         let ps = self.picker_sat;
@@ -1119,7 +1161,7 @@ fn labeled_row<'a>(
     content: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     row![
-        text(label).width(160),
+        text(label).width(160).size(12.0).color(Color::from_rgb8(0x7f, 0x82, 0x9d)),
         content.into(),
     ]
     .spacing(8)
@@ -1131,30 +1173,26 @@ fn labeled_row<'a>(
 
 fn nav_item(label: &'static str, target: Section, current: Section) -> Element<'static, Message> {
     let active = target == current;
+    let accent = Color::from_rgb8(0xcb, 0xa6, 0xf7);
+    let muted  = Color::from_rgb8(0x6c, 0x70, 0x86);
     button(
         text(label)
             .size(13.0)
-            .color(if active {
-                Color::from_rgb8(0xcb, 0xa6, 0xf7)
-            } else {
-                Color::from_rgb8(0x58, 0x5b, 0x70)
-            }),
+            .color(if active { accent } else { muted }),
     )
     .on_press(Message::Tab(target))
     .width(Length::Fill)
-    .padding([9, 12])
-    .style(move |_: &iced::Theme, _| iced::widget::button::Style {
+    .padding([10, 14])
+    .style(move |_: &iced::Theme, status| iced::widget::button::Style {
         background: if active {
-            Some(iced::Background::Color(Color::from_rgba8(0xcb, 0xa6, 0xf7, 0.14)))
+            Some(iced::Background::Color(Color::from_rgba8(0xcb, 0xa6, 0xf7, 0.16)))
+        } else if status == iced::widget::button::Status::Hovered {
+            Some(iced::Background::Color(Color::from_rgba8(0xcb, 0xa6, 0xf7, 0.07)))
         } else {
             None
         },
-        border: iced::Border { radius: 6.0.into(), ..Default::default() },
-        text_color: if active {
-            Color::from_rgb8(0xcb, 0xa6, 0xf7)
-        } else {
-            Color::from_rgb8(0x58, 0x5b, 0x70)
-        },
+        border: iced::Border { radius: 7.0.into(), ..Default::default() },
+        text_color: if active { accent } else { muted },
         ..Default::default()
     })
     .into()
@@ -1165,35 +1203,48 @@ fn nav_item(label: &'static str, target: Section, current: Section) -> Element<'
 fn section_card<'a>(title: &'static str, content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     container(
         column![
-            text(title).size(11.0).color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+            text(title).size(10.5).color(Color::from_rgb8(0x6c, 0x70, 0x86)),
             rule::horizontal(1.0f32),
             content.into(),
         ]
-        .spacing(10),
+        .spacing(12),
     )
-    .padding([12, 16])
+    .padding([14, 18])
     .width(Length::Fill)
     .style(|_: &iced::Theme| iced::widget::container::Style {
-        background: Some(iced::Background::Color(Color::from_rgb8(0x1a, 0x1a, 0x2e))),
+        background: Some(iced::Background::Color(Color::from_rgb8(0x18, 0x18, 0x27))),
         border: iced::Border {
-            color: Color::from_rgb8(0x2a, 0x2a, 0x40),
+            color: Color::from_rgb8(0x30, 0x30, 0x46),
             width: 1.0,
-            radius: 8.0.into(),
+            radius: 10.0.into(),
         },
         ..Default::default()
     })
     .into()
 }
 
-fn pos_btn(label: &str, target: Position, current: Position) -> Element<'_, Message> {
-    let active = target == current;
-    button(text(if active {
-        format!("[{label}]")
+fn pos_btn(label: &'static str, target: Position, current: Position) -> Element<'static, Message> {
+    toggle_chip(label, target == current, Message::PositionChanged(target))
+}
+
+/// Pill-shaped toggle chip used everywhere in place of iced's default `primary` button.
+/// Active = accent purple tint + accent text.  Inactive = subtle grey tint + muted text.
+fn toggle_chip(label: &'static str, active: bool, msg: Message) -> Element<'static, Message> {
+    let (bg, txt) = if active {
+        (Color::from_rgba8(0xcb, 0xa6, 0xf7, 0.22), Color::from_rgb8(0xcb, 0xa6, 0xf7))
     } else {
-        label.to_string()
-    }))
-    .on_press(Message::PositionChanged(target))
-    .into()
+        (Color::from_rgba8(0x45, 0x47, 0x5a, 0.40), Color::from_rgb8(0x9f, 0xa2, 0xb5))
+    };
+    button(text(label).size(12.0).color(txt))
+        .on_press(msg)
+        .padding([5, 14])
+        .style(move |_: &iced::Theme, _| iced::widget::button::Style {
+            background: Some(iced::Background::Color(bg)),
+            border: iced::Border { radius: 99.0.into(), ..Default::default() },
+            text_color: txt,
+            ..Default::default()
+        })
+        .into()
 }
 
 fn color_input<'a>(
