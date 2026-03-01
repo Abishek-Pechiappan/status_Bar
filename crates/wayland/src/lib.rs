@@ -490,10 +490,23 @@ impl Bar {
 
     fn view_notify_panel(&self) -> Element<'_, Message> {
         let font_size  = self.theme.font_size;
-        let bg_iced    = self.theme.background.with_alpha(0.97).to_iced();
         let fg_iced    = self.theme.foreground.to_iced();
         let dim_iced   = self.theme.foreground.with_alpha(0.55).to_iced();
         let accent_iced = self.theme.accent.to_iced();
+
+        // Panel surface: blend 12 % of the foreground into the background.
+        // This produces a subtly lighter (dark themes) or darker (light themes)
+        // shade that is clearly different from the bar itself.
+        let bg   = self.theme.background;
+        let fg   = self.theme.foreground;
+        let mix  = 0.12_f32;
+        let panel_bg = ThemeColor {
+            r: (bg.r + (fg.r - bg.r) * mix).clamp(0.0, 1.0),
+            g: (bg.g + (fg.g - bg.g) * mix).clamp(0.0, 1.0),
+            b: (bg.b + (fg.b - bg.b) * mix).clamp(0.0, 1.0),
+            a: 0.98,
+        };
+        let bg_iced = panel_bg.to_iced();
 
         // ── Header row ───────────────────────────────────────────────────────
         let header = row![
@@ -565,8 +578,19 @@ impl Bar {
             .into()
         };
 
+        // Thin accent strip at the very top — clear visual boundary between bar and panel.
+        let top_border: Element<'_, Message> = container(iced::widget::Space::new())
+            .width(Length::Fill)
+            .height(Length::Fixed(2.0))
+            .style(move |_: &iced::Theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(accent_iced)),
+                ..Default::default()
+            })
+            .into();
+
         container(
             column![
+                top_border,
                 header,
                 iced::widget::rule::horizontal(1),
                 body,
@@ -707,14 +731,14 @@ fn config_stream() -> impl iced::futures::Stream<Item = Message> {
 
 /// D-Bus `org.freedesktop.Notifications` listener.
 ///
-/// Registers the bar as a notification daemon.  If another daemon is already
-/// running (e.g. dunst, mako, swaync) this subscription sleeps harmlessly and
-/// the notify widget will still show a static bell icon.
+/// First tries to register as the notification daemon.
+/// If another daemon is already running (dunst, mako, swaync …) the
+/// registration fails and we fall back to polling `dunstctl history` every
+/// 2 s instead — so the notify widget still works with dunst.
 fn notify_stream() -> impl iced::futures::Stream<Item = Message> {
     iced::stream::channel(32, |mut iced_tx: Sender<Message>| async move {
-        // Bridge: zbus → iced via a tokio unbounded channel
+        // ── Try to become the D-Bus notification daemon ───────────────────────
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<Message>();
-
         let daemon = NotifDaemon { sender: tx, next_id: 0 };
 
         let conn_result = zbus::connection::Builder::session()
@@ -725,20 +749,94 @@ fn notify_stream() -> impl iced::futures::Stream<Item = Message> {
             Ok(builder) => match builder.build().await {
                 Ok(_conn) => {
                     info!("Registered as org.freedesktop.Notifications daemon");
-                    // Forward messages from zbus → iced
                     while let Some(msg) = rx.recv().await {
                         let _ = iced_tx.try_send(msg);
                     }
+                    loop { tokio::time::sleep(Duration::from_secs(3600)).await; }
                 }
-                Err(e) => warn!("D-Bus build failed — notification daemon unavailable: {e}"),
+                Err(e) => {
+                    warn!("D-Bus build failed ({e}) — falling back to dunstctl polling");
+                    dunstctl_poll_loop(iced_tx).await;
+                }
             },
             Err(e) => {
-                warn!("Could not register notification daemon (another daemon running?): {e}");
+                warn!("Could not register notification daemon ({e}) — falling back to dunstctl polling");
+                dunstctl_poll_loop(iced_tx).await;
+            }
+        }
+    })
+}
+
+/// Polls `dunstctl history` every 2 s and forwards new notifications to iced.
+/// Used automatically when another notification daemon (e.g. dunst) is running.
+async fn dunstctl_poll_loop(mut sender: Sender<Message>) {
+    let mut known_ids: std::collections::HashSet<u32> = std::collections::HashSet::new();
+
+    loop {
+        if let Ok(out) = tokio::process::Command::new("dunstctl")
+            .arg("history")
+            .output()
+            .await
+        {
+            if out.status.success() {
+                let json = String::from_utf8_lossy(&out.stdout);
+                for (id, app_name, summary, body) in parse_dunstctl_history(&json) {
+                    if known_ids.insert(id) {
+                        let _ = sender.try_send(Message::App(AppMessage::NotificationReceived {
+                            id,
+                            app_name,
+                            summary,
+                            body,
+                        }));
+                    }
+                }
+                // Prevent the set from growing indefinitely.
+                if known_ids.len() > 500 {
+                    known_ids.clear();
+                }
             }
         }
 
-        loop { tokio::time::sleep(Duration::from_secs(3600)).await; }
-    })
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+}
+
+/// Parse the JSON output of `dunstctl history` into a flat list of entries.
+///
+/// Format: `{"data": [[{notification}, …], …]}`
+/// Each notification field is `{"data": <value>, "type": "string"|"int"|…}`.
+fn parse_dunstctl_history(json: &str) -> Vec<(u32, String, String, String)> {
+    let mut out = Vec::new();
+    let Ok(root) = serde_json::from_str::<serde_json::Value>(json) else {
+        return out;
+    };
+    let Some(stacks) = root.get("data").and_then(|v| v.as_array()) else {
+        return out;
+    };
+    for stack in stacks {
+        let Some(entries) = stack.as_array() else { continue };
+        for entry in entries {
+            let id = entry.get("id")
+                .and_then(|v| v.get("data"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as u32;
+            if id == 0 { continue; }
+            let app_name = dunst_str(entry, "appname");
+            let summary  = dunst_str(entry, "summary");
+            let body     = dunst_str(entry, "body");
+            out.push((id, app_name, summary, body));
+        }
+    }
+    out
+}
+
+/// Extract a string-typed field from a dunstctl history notification object.
+fn dunst_str(entry: &serde_json::Value, key: &str) -> String {
+    entry.get(key)
+        .and_then(|v| v.get("data"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string()
 }
 
 // ── D-Bus notification interface ──────────────────────────────────────────────

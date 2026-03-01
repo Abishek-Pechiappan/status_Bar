@@ -362,6 +362,7 @@ dependencies = [
  "futures",
  "iced",
  "iced_layershell",
+ "serde_json",
  "tokio",
  "tracing",
  "zbus",
