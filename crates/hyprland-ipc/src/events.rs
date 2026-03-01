@@ -9,6 +9,8 @@ pub enum HyprlandEvent {
     MonitorFocused(String),
     /// Active keyboard layout changed.  Carries the layout name string.
     ActiveLayout(String),
+    /// A window was opened, closed, or moved — client list needs refreshing.
+    WindowListChanged,
     /// An event we don't handle yet — carries the raw line for debugging.
     Unknown(String),
 }
@@ -74,6 +76,9 @@ pub fn parse_event(line: &str) -> HyprlandEvent {
                 .unwrap_or_else(|| data.trim().to_string());
             HyprlandEvent::ActiveLayout(layout)
         }
+        // Window open/close/move — client list is stale, needs refresh.
+        "openwindow" | "closewindow" | "movewindow" | "movewindowv2"
+        | "windowtitle" | "windowtitlev2" => HyprlandEvent::WindowListChanged,
         _ => HyprlandEvent::Unknown(line.to_string()),
     }
 }

@@ -267,70 +267,72 @@ impl Bar {
                 );
             }
             AppMessage::VolumeAdjust(delta) => {
+                // Optimistic update: reflect change immediately without waiting for wpctl.
+                if let Some(vol) = self.state.system.volume {
+                    let step = delta as f32 / 100.0;
+                    self.state.system.volume = Some((vol + step).clamp(0.0, 1.5));
+                }
                 let arg = if delta >= 0 {
                     format!("{delta}%+")
                 } else {
                     format!("{}%-", delta.unsigned_abs())
                 };
-                return Task::perform(
-                    async move {
-                        let _ = tokio::process::Command::new("wpctl")
-                            .args(["set-volume", "-l", "1.5", "@DEFAULT_AUDIO_SINK@", &arg])
-                            .output()
-                            .await;
-                    },
-                    |_| Message::Tick,
-                );
+                tokio::spawn(async move {
+                    let _ = tokio::process::Command::new("wpctl")
+                        .args(["set-volume", "-l", "1.5", "@DEFAULT_AUDIO_SINK@", &arg])
+                        .output()
+                        .await;
+                });
             }
             AppMessage::VolumeMuteToggle => {
-                return Task::perform(
-                    async {
-                        let _ = tokio::process::Command::new("wpctl")
-                            .args(["set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"])
-                            .output()
-                            .await;
-                    },
-                    |_| Message::Tick,
-                );
+                // Optimistic update: flip mute state immediately.
+                self.state.system.volume_muted = !self.state.system.volume_muted;
+                tokio::spawn(async {
+                    let _ = tokio::process::Command::new("wpctl")
+                        .args(["set-mute", "@DEFAULT_AUDIO_SINK@", "toggle"])
+                        .output()
+                        .await;
+                });
             }
             AppMessage::VolumeSet(val) => {
-                return Task::perform(
-                    async move {
-                        let _ = tokio::process::Command::new("wpctl")
-                            .args(["set-volume", "@DEFAULT_AUDIO_SINK@", &format!("{val:.2}")])
-                            .output()
-                            .await;
-                    },
-                    |_| Message::Tick,
-                );
+                // Optimistic update.
+                self.state.system.volume = Some(val.clamp(0.0, 1.5));
+                tokio::spawn(async move {
+                    let _ = tokio::process::Command::new("wpctl")
+                        .args(["set-volume", "@DEFAULT_AUDIO_SINK@", &format!("{val:.2}")])
+                        .output()
+                        .await;
+                });
             }
             AppMessage::BrightnessSet(pct) => {
-                let pct = (pct.round() as u32).clamp(1, 100);
-                return Task::perform(
-                    async move {
-                        let _ = tokio::process::Command::new("brightnessctl")
-                            .args(["set", &format!("{pct}%")])
-                            .output()
-                            .await;
-                    },
-                    |_| Message::Tick,
-                );
+                let clamped = (pct.round() as u8).clamp(1, 100);
+                // Optimistic update.
+                self.state.system.brightness = Some(clamped);
+                let pct_u32 = clamped as u32;
+                tokio::spawn(async move {
+                    let _ = tokio::process::Command::new("brightnessctl")
+                        .args(["set", &format!("{pct_u32}%")])
+                        .output()
+                        .await;
+                });
             }
             AppMessage::BrightnessAdjust(delta) => {
+                // Optimistic update.
+                if let Some(b) = self.state.system.brightness {
+                    let new = (b as i32 + delta).clamp(1, 100) as u8;
+                    self.state.system.brightness = Some(new);
+                }
                 let arg = if delta >= 0 {
                     format!("{delta}%+")
                 } else {
                     format!("{}%-", delta.unsigned_abs())
                 };
-                return Task::perform(
-                    async move {
-                        let _ = tokio::process::Command::new("brightnessctl")
-                            .args(["set", &arg])
-                            .output()
-                            .await;
-                    },
-                    |_| Message::Tick,
-                );
+                tokio::spawn(async move {
+                    let _ = tokio::process::Command::new("brightnessctl")
+                        .args(["set", &arg])
+                        .output()
+                        .await;
+                });
             }
             AppMessage::MediaPlayPause => {
                 return Task::perform(
@@ -741,9 +743,33 @@ fn ipc_stream() -> impl iced::futures::Stream<Item = Message> {
                     let mut lines = tokio::io::BufReader::new(stream).lines();
 
                     while let Ok(Some(line)) = lines.next_line().await {
-                        if let Some(msg) =
-                            convert_hypr_event(bar_ipc::events::parse_event(&line))
-                        {
+                        let event = bar_ipc::events::parse_event(&line);
+                        // Fetch clients immediately when window list changes.
+                        if matches!(event, HyprlandEvent::WindowListChanged) {
+                            if let Ok(out) = tokio::process::Command::new("hyprctl")
+                                .args(["clients", "-j"])
+                                .output()
+                                .await
+                            {
+                                if out.status.success() {
+                                    let json = String::from_utf8_lossy(&out.stdout);
+                                    if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(&json) {
+                                        let clients: Vec<ClientInfo> = arr.iter().filter_map(|c| {
+                                            let class = c.get("class")?.as_str()?.to_string();
+                                            if class.is_empty() { return None; }
+                                            Some(ClientInfo {
+                                                address: c.get("address").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                                class,
+                                                title: c.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                                                workspace_id: c.get("workspace").and_then(|v| v.get("id")).and_then(|v| v.as_i64()).unwrap_or(0).max(0) as u32,
+                                            })
+                                        }).collect();
+                                        let _ = sender.try_send(Message::App(AppMessage::ClientsUpdated(clients)));
+                                    }
+                                }
+                            }
+                        }
+                        if let Some(msg) = convert_hypr_event(event) {
                             let _ = sender.try_send(Message::App(msg));
                         }
                     }
@@ -895,7 +921,7 @@ fn dunst_str(entry: &serde_json::Value, key: &str) -> String {
         .to_string()
 }
 
-/// Polls `hyprctl clients -j` every 2 s to keep the window/client list fresh.
+/// Polls `hyprctl clients -j` every 10 s as a fallback — real-time updates come from ipc_stream.
 fn clients_stream() -> impl iced::futures::Stream<Item = Message> {
     iced::stream::channel(4, |mut sender: Sender<Message>| async move {
         loop {
@@ -936,7 +962,7 @@ fn clients_stream() -> impl iced::futures::Stream<Item = Message> {
                     }
                 }
             }
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            tokio::time::sleep(Duration::from_secs(10)).await;
         }
     })
 }
@@ -1044,6 +1070,9 @@ fn convert_hypr_event(event: HyprlandEvent) -> Option<AppMessage> {
         }
         HyprlandEvent::Fullscreen(fs) => Some(AppMessage::FullscreenStateChanged(fs)),
         HyprlandEvent::ActiveLayout(layout) => Some(AppMessage::KeyboardLayoutChanged(layout)),
-        HyprlandEvent::MonitorFocused(_) | HyprlandEvent::Unknown(_) => None,
+        // WindowListChanged is handled inline in ipc_stream — return None here.
+        HyprlandEvent::WindowListChanged
+        | HyprlandEvent::MonitorFocused(_)
+        | HyprlandEvent::Unknown(_) => None,
     }
 }

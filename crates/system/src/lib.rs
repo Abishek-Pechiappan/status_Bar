@@ -21,16 +21,32 @@ pub fn spawn_monitor(interval_ms: u64, custom_cmd: String) -> mpsc::Receiver<Sys
     let interval_secs = interval_ms as f64 / 1000.0;
 
     tokio::spawn(async move {
-        let mut sys      = System::new_all();
-        let mut networks = Networks::new_with_refreshed_list();
-        let mut ticker   = time::interval(interval);
+        let mut sys        = System::new_all();
+        let mut networks   = Networks::new_with_refreshed_list();
+        // Create once and reuse — avoids rescanning all hardware every tick.
+        let mut disks      = Disks::new_with_refreshed_list();
+        let mut components = Components::new_with_refreshed_list();
+        let mut ticker     = time::interval(interval);
+        let mut tick_count: u32 = 0;
 
         loop {
             ticker.tick().await;
-            sys.refresh_all();
+            tick_count = tick_count.wrapping_add(1);
+
+            // Targeted refresh: skip process enumeration entirely (we don't need it).
+            sys.refresh_cpu_usage();
+            sys.refresh_memory();
             networks.refresh(false);
 
-            let snapshot = take_snapshot(&sys, &networks, interval_secs, &custom_cmd).await;
+            // Disk and temperature change slowly — refresh every 15 ticks (~30 s).
+            if tick_count % 15 == 0 {
+                disks.refresh(false);
+                components.refresh(false);
+            }
+
+            let snapshot = take_snapshot(
+                &sys, &networks, &disks, &components, interval_secs, &custom_cmd,
+            ).await;
 
             if tx.send(snapshot).await.is_err() {
                 break;
@@ -42,8 +58,10 @@ pub fn spawn_monitor(interval_ms: u64, custom_cmd: String) -> mpsc::Receiver<Sys
 }
 
 async fn take_snapshot(
-    sys: &System,
-    networks: &Networks,
+    sys:        &System,
+    networks:   &Networks,
+    disks:      &Disks,
+    components: &Components,
     interval_secs: f64,
     custom_cmd: &str,
 ) -> SystemSnapshot {
@@ -56,16 +74,15 @@ async fn take_snapshot(
     };
 
     // ── CPU temperature ───────────────────────────────────────────────────────
-    let cpu_temp = read_cpu_temp();
+    let cpu_temp = read_cpu_temp(components);
 
     // ── Memory + Swap ────────────────────────────────────────────────────────
-    let ram_used  = sys.used_memory();
-    let ram_total = sys.total_memory();
+    let ram_used   = sys.used_memory();
+    let ram_total  = sys.total_memory();
     let swap_used  = sys.used_swap();
     let swap_total = sys.total_swap();
 
     // ── Disk ─────────────────────────────────────────────────────────────────
-    let disks = Disks::new_with_refreshed_list();
     let (disk_used, disk_total) = disks
         .iter()
         .find(|d| d.mount_point() == std::path::Path::new("/"))
@@ -78,7 +95,6 @@ async fn take_snapshot(
     let net_rx = (raw_rx as f64 / interval_secs) as u64;
     let net_tx = (raw_tx as f64 / interval_secs) as u64;
 
-    // Primary interface: highest combined traffic, excluding loopback.
     let net_interface = networks
         .iter()
         .filter(|(name, _)| *name != "lo")
@@ -111,7 +127,7 @@ async fn take_snapshot(
     // ── Load averages ────────────────────────────────────────────────────────
     let (load_1, load_5, load_15) = read_loadavg();
 
-    // ── Media player (playerctl) ─────────────────────────────────────────────
+    // ── Media player (single playerctl call) ─────────────────────────────────
     let (media_title, media_artist, media_playing) = read_media().await;
 
     // ── Custom command ───────────────────────────────────────────────────────
@@ -154,8 +170,7 @@ async fn take_snapshot(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn read_cpu_temp() -> Option<f32> {
-    let components = Components::new_with_refreshed_list();
+fn read_cpu_temp(components: &Components) -> Option<f32> {
     components
         .iter()
         .find(|c| {
@@ -216,57 +231,42 @@ fn read_loadavg() -> (f32, f32, f32) {
     (l1, l5, l15)
 }
 
-/// Query playerctl for the current media player state.
+/// Query playerctl using a single call with a format string.
+/// Format: "STATUS|TITLE|ARTIST" — avoids spawning 3 separate processes.
 async fn read_media() -> (Option<String>, Option<String>, bool) {
-    let status = tokio::process::Command::new("playerctl")
-        .arg("status")
+    let out = tokio::process::Command::new("playerctl")
+        .args(["metadata", "--format", "{{status}}|{{title}}|{{artist}}"])
         .output()
         .await;
 
-    let status_str = match status {
-        Ok(out) if out.status.success() => {
-            String::from_utf8_lossy(&out.stdout).trim().to_string()
-        }
+    let text = match out {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
         _ => return (None, None, false),
     };
 
-    if status_str == "Stopped" || status_str.is_empty() {
+    let mut parts = text.splitn(3, '|');
+    let status = parts.next().unwrap_or("").trim();
+    let title  = parts.next().unwrap_or("").trim();
+    let artist = parts.next().unwrap_or("").trim();
+
+    if status == "Stopped" || status.is_empty() {
         return (None, None, false);
     }
 
-    let playing = status_str == "Playing";
-    let title  = playerctl_get(&["metadata", "title"]).await;
-    let artist = playerctl_get(&["metadata", "artist"]).await;
-    (title, artist, playing)
-}
+    let playing       = status == "Playing";
+    let title_opt     = if title.is_empty()  { None } else { Some(title.to_string()) };
+    let artist_opt    = if artist.is_empty() { None } else { Some(artist.to_string()) };
 
-async fn playerctl_get(args: &[&str]) -> Option<String> {
-    let out = tokio::process::Command::new("playerctl")
-        .args(args)
-        .output()
-        .await
-        .ok()?;
-    if out.status.success() {
-        let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if s.is_empty() { None } else { Some(s) }
-    } else {
-        None
-    }
+    (title_opt, artist_opt, playing)
 }
 
 /// Read WiFi signal level in dBm for `iface` from `/proc/net/wireless`.
-///
-/// Returns `None` for wired interfaces (not listed in that file) or if the
-/// file cannot be read.  The level column value is typically a negative dBm
-/// integer followed by a period (e.g. `-43.`).
 fn read_wifi_signal(iface: &str) -> Option<i32> {
     let content = std::fs::read_to_string("/proc/net/wireless").ok()?;
     for line in content.lines().skip(2) {
         let line = line.trim();
-        // Lines look like:  wlan0: 0000   67.  -43.  -256.  ...
         let (name, rest) = line.split_once(':')?;
         if name.trim() != iface { continue; }
-        // Fields after the colon: status  link  level  noise …
         let mut parts = rest.split_whitespace();
         let _ = parts.next(); // status
         let _ = parts.next(); // link quality
