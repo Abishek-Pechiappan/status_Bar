@@ -52,6 +52,10 @@ pub struct Theme {
     pub network_show_name:   bool,
     /// Show WiFi signal strength in the network widget.
     pub network_show_signal: bool,
+    /// Show an interactive drag slider in the volume widget.
+    pub volume_show_slider:     bool,
+    /// Show an interactive drag slider in the brightness widget.
+    pub brightness_show_slider: bool,
 }
 
 impl Theme {
@@ -90,6 +94,8 @@ impl Theme {
             network_show_speed:  cfg.network_show.contains("speed"),
             network_show_name:   cfg.network_show.contains("name"),
             network_show_signal: cfg.network_show.contains("signal"),
+            volume_show_slider:     cfg.volume_show_slider,
+            brightness_show_slider: cfg.brightness_show_slider,
         }
     }
 }

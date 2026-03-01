@@ -158,6 +158,12 @@ pub struct ThemeConfig {
     /// `"speed"` (↓rx ↑tx), `"name"` (interface name), `"signal"` (WiFi dBm/bars).
     /// Default: `"speed"`.  Example: `"speed,signal"` or `"name,speed"`.
     pub network_show: String,
+    /// Show an interactive drag slider in the volume widget.
+    /// When `false` (default), only the icon and percentage text are shown.
+    pub volume_show_slider: bool,
+    /// Show an interactive drag slider in the brightness widget.
+    /// When `false` (default), only the icon and percentage text are shown.
+    pub brightness_show_slider: bool,
 }
 
 impl Default for ThemeConfig {
@@ -183,7 +189,9 @@ impl Default for ThemeConfig {
             widget_padding_y:  4,
             workspace_style:   "numbers".to_string(),
             workspace_show_all: true,
-            network_show:      "speed".to_string(),
+            network_show:           "speed".to_string(),
+            volume_show_slider:     false,
+            brightness_show_slider: false,
         }
     }
 }

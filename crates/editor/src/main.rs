@@ -208,6 +208,8 @@ enum Message {
     ClockFormatPreset(bool),  // true = 24h, false = 12h
     WidgetBorderColorChanged(String),
     WidgetBorderWidthChanged(f32),
+    VolumeShowSlider(bool),
+    BrightnessShowSlider(bool),
     // Colour picker
     TogglePicker(ColorField),
     ColorGridPicked(f32, f32, f32),  // h, s, v from the grid cell
@@ -484,6 +486,8 @@ impl Editor {
                 }
             }
             Message::WidgetBorderWidthChanged(v) => self.config.theme.widget_border_width = v as u32,
+            Message::VolumeShowSlider(v)     => self.config.theme.volume_show_slider     = v,
+            Message::BrightnessShowSlider(v) => self.config.theme.brightness_show_slider = v,
 
             Message::ClockFormatPreset(twentyfour) => {
                 let fmt = if twentyfour { "%H:%M".to_string() } else { "%I:%M %p".to_string() };
@@ -942,6 +946,17 @@ impl Editor {
             if active { btn.style(iced::widget::button::primary).into() } else { btn.into() }
         };
 
+        let vol_slider_on  = t.volume_show_slider;
+        let vol_btn = |label: &'static str, on: bool| -> Element<'_, Message> {
+            let btn = button(text(label).size(13.0)).on_press(Message::VolumeShowSlider(on));
+            if vol_slider_on == on { btn.style(iced::widget::button::primary).into() } else { btn.into() }
+        };
+        let brt_slider_on  = t.brightness_show_slider;
+        let brt_btn = |label: &'static str, on: bool| -> Element<'_, Message> {
+            let btn = button(text(label).size(13.0)).on_press(Message::BrightnessShowSlider(on));
+            if brt_slider_on == on { btn.style(iced::widget::button::primary).into() } else { btn.into() }
+        };
+
         let ps = self.picker_sat;
         let pa = self.picker_alpha;
         let picker_for = |field: ColorField| -> Option<(f32, f32)> {
@@ -987,6 +1002,16 @@ impl Editor {
                             text_input("%a %d %b", &self.date_format_buf)
                                 .on_input(Message::DateFormatChanged).width(130),
                             text("strftime").size(11.0).color(muted),
+                        ].spacing(4).align_y(Alignment::Center)),
+                    labeled_row("Volume Slider",
+                        row![
+                            vol_btn("On", true), vol_btn("Off", false),
+                            text("show drag slider in volume widget").size(11.0).color(muted),
+                        ].spacing(4).align_y(Alignment::Center)),
+                    labeled_row("Brightness Slider",
+                        row![
+                            brt_btn("On", true), brt_btn("Off", false),
+                            text("show drag slider in brightness widget").size(11.0).color(muted),
                         ].spacing(4).align_y(Alignment::Center)),
                 ]
                 .spacing(14),

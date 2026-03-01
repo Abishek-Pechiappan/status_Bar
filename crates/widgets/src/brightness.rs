@@ -39,19 +39,31 @@ impl BrightnessWidget {
             Message::BrightnessAdjust(step)
         });
 
-        let brt_slider = slider(0.0f32..=100.0, pct as f32, Message::BrightnessSet)
-            .step(1.0f32)
-            .width(Length::Fixed(72.0));
+        if theme.brightness_show_slider {
+            let brt_slider = slider(0.0f32..=100.0, pct as f32, Message::BrightnessSet)
+                .step(1.0f32)
+                .width(Length::Fixed(72.0));
 
-        Some(
-            row![
-                icon_el,
-                brt_slider,
-                text(format!("{pct}%")).size(theme.font_size - 1.0).width(Length::Fixed(32.0)),
-            ]
-            .spacing(4)
-            .align_y(Alignment::Center)
-            .into(),
-        )
+            Some(
+                row![
+                    icon_el,
+                    brt_slider,
+                    text(format!("{pct}%")).size(theme.font_size - 1.0).width(Length::Fixed(32.0)),
+                ]
+                .spacing(4)
+                .align_y(Alignment::Center)
+                .into(),
+            )
+        } else {
+            Some(
+                row![
+                    icon_el,
+                    text(format!("{pct}%")).size(theme.font_size - 1.0),
+                ]
+                .spacing(4)
+                .align_y(Alignment::Center)
+                .into(),
+            )
+        }
     }
 }
