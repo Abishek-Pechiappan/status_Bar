@@ -1,4 +1,4 @@
-use crate::state::{SystemSnapshot, WorkspaceInfo};
+use crate::state::{ClientInfo, SystemSnapshot, WorkspaceInfo};
 
 /// All messages (events) that can flow through the application event bus.
 ///
@@ -71,6 +71,12 @@ pub enum Message {
     NotifyDismiss(u32),
     /// User pressed "Clear all" in the notification panel.
     NotifyClearAll,
+
+    // ── Tray / window list ────────────────────────────────────────────────────
+    /// Fresh list of all open clients from `hyprctl clients -j`.
+    ClientsUpdated(Vec<ClientInfo>),
+    /// User clicked a tray entry — focus the window at the given address.
+    WindowFocusRequested(String),
 
     // ── Internal ──────────────────────────────────────────────────────────────
     /// One-second timer tick — used to update the clock.

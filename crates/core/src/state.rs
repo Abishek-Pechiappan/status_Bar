@@ -10,6 +10,19 @@ pub struct NotifEntry {
     pub body: String,
 }
 
+/// Information about a single open window / client (from `hyprctl clients -j`).
+#[derive(Debug, Clone)]
+pub struct ClientInfo {
+    /// Unique Hyprland window address (e.g. `"0x1234abcd"`).
+    pub address: String,
+    /// Application class name (e.g. `"kitty"`, `"firefox"`).
+    pub class: String,
+    /// Current window title.
+    pub title: String,
+    /// Workspace the window is on (0 = special/untracked).
+    pub workspace_id: u32,
+}
+
 /// Central application state — all widgets read from this snapshot.
 #[derive(Debug, Clone)]
 pub struct AppState {
@@ -31,6 +44,8 @@ pub struct AppState {
     pub notifications: Vec<NotifEntry>,
     /// Whether the notification panel is currently expanded.
     pub notify_panel_open: bool,
+    /// All currently open windows / clients (from `hyprctl clients -j`).
+    pub clients: Vec<ClientInfo>,
 }
 
 impl Default for AppState {
@@ -45,6 +60,7 @@ impl Default for AppState {
             time: Local::now(),
             notifications: Vec::new(),
             notify_panel_open: false,
+            clients: Vec::new(),
         }
     }
 }

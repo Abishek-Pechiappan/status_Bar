@@ -10,14 +10,14 @@
 use bar_config::{default_path, load as load_config, BarConfig, ConfigWatcher, Position};
 use bar_core::{
     event::Message as AppMessage,
-    state::{AppState, NotifEntry, WorkspaceInfo},
+    state::{AppState, ClientInfo, NotifEntry, WorkspaceInfo},
 };
 use bar_ipc::{fetch_active_window, fetch_workspaces, HyprlandEvent, HyprlandIpc};
 use bar_theme::{Color as ThemeColor, Theme};
 use bar_widgets::{
     BatteryWidget, BrightnessWidget, ClockWidget, CpuWidget, CustomWidget, DiskWidget,
     KeyboardWidget, LoadWidget, MediaWidget, MemoryWidget, NetworkWidget, NotifyWidget,
-    SeparatorWidget, SwapWidget, TempWidget, TitleWidget, UptimeWidget, VolumeWidget,
+    SeparatorWidget, SwapWidget, TempWidget, TitleWidget, TrayWidget, UptimeWidget, VolumeWidget,
     WorkspaceWidget,
 };
 use chrono::Local;
@@ -118,6 +118,7 @@ struct Bar {
     custom:     CustomWidget,
     separator:  SeparatorWidget,
     notify:     NotifyWidget,
+    tray:       TrayWidget,
 }
 
 impl Bar {
@@ -148,6 +149,7 @@ impl Bar {
             custom:     CustomWidget::new(),
             separator:  SeparatorWidget::new(),
             notify:     NotifyWidget::new(),
+            tray:       TrayWidget::new(),
         };
 
         let init_task = Task::perform(
@@ -387,6 +389,22 @@ impl Bar {
                 );
             }
 
+            // ── Tray / window list ────────────────────────────────────────────
+            AppMessage::ClientsUpdated(clients) => {
+                self.state.clients = clients;
+            }
+            AppMessage::WindowFocusRequested(addr) => {
+                return Task::perform(
+                    async move {
+                        let _ = tokio::process::Command::new("hyprctl")
+                            .args(["dispatch", "focuswindow", &format!("address:{addr}")])
+                            .output()
+                            .await;
+                    },
+                    |_| Message::Tick,
+                );
+            }
+
             AppMessage::Tick | AppMessage::Shutdown => {}
         }
         Task::none()
@@ -415,6 +433,7 @@ impl Bar {
             "media"       => self.media.view(&self.state, &self.theme),
             "custom"      => self.custom.view(&self.state, &self.theme),
             "separator"   => Some(self.separator.view(&self.state, &self.theme)),
+            "tray"        => Some(self.tray.view(&self.state, &self.theme)),
             other => {
                 warn!("Unknown widget kind in config: {other}");
                 None
@@ -651,6 +670,7 @@ impl Bar {
             Subscription::run(system_stream),
             Subscription::run(config_stream),
             Subscription::run(notify_stream),
+            Subscription::run(clients_stream),
         ])
     }
 
@@ -873,6 +893,52 @@ fn dunst_str(entry: &serde_json::Value, key: &str) -> String {
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_string()
+}
+
+/// Polls `hyprctl clients -j` every 2 s to keep the window/client list fresh.
+fn clients_stream() -> impl iced::futures::Stream<Item = Message> {
+    iced::stream::channel(4, |mut sender: Sender<Message>| async move {
+        loop {
+            if let Ok(out) = tokio::process::Command::new("hyprctl")
+                .args(["clients", "-j"])
+                .output()
+                .await
+            {
+                if out.status.success() {
+                    let json = String::from_utf8_lossy(&out.stdout);
+                    if let Ok(arr) = serde_json::from_str::<Vec<serde_json::Value>>(&json) {
+                        let clients: Vec<ClientInfo> = arr
+                            .iter()
+                            .filter_map(|c| {
+                                let class = c.get("class")?.as_str()?.to_string();
+                                if class.is_empty() {
+                                    return None;
+                                }
+                                Some(ClientInfo {
+                                    address: c.get("address")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    class,
+                                    title: c.get("title")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or("")
+                                        .to_string(),
+                                    workspace_id: c.get("workspace")
+                                        .and_then(|v| v.get("id"))
+                                        .and_then(|v| v.as_i64())
+                                        .unwrap_or(0)
+                                        .max(0) as u32,
+                                })
+                            })
+                            .collect();
+                        let _ = sender.try_send(Message::App(AppMessage::ClientsUpdated(clients)));
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+    })
 }
 
 // ── D-Bus notification interface ──────────────────────────────────────────────
