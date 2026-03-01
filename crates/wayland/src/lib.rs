@@ -465,11 +465,16 @@ impl Bar {
         let border_color = self.theme.border_color.to_iced();
         let border_width = self.theme.border_width as f32;
         let bar_h        = self.config.global.height as f32;
+        // Apply the background color (with opacity) at the container level, not the
+        // surface level.  This lets Wayland/Hyprland composite the wallpaper correctly
+        // through the transparent parts of the surface.
+        let bar_bg = self.theme.background.with_alpha(self.config.global.opacity).to_iced();
 
         let bar_outer: Element<'_, Message> = container(bar)
             .width(Length::Fill)
             .height(Length::Fixed(bar_h))
             .style(move |_: &iced::Theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(bar_bg)),
                 border: iced::Border {
                     color: border_color,
                     width: border_width,
@@ -623,9 +628,11 @@ impl Bar {
     // ── Style ─────────────────────────────────────────────────────────────────
 
     fn style(&self, _theme: &iced::Theme) -> iced::theme::Style {
-        let bg = self.theme.background.with_alpha(self.config.global.opacity);
+        // Keep the surface itself fully transparent so Wayland can composite the
+        // wallpaper through the bar.  The actual background colour (with opacity)
+        // is applied on the bar container in view(), where alpha works correctly.
         iced::theme::Style {
-            background_color: bg.to_iced(),
+            background_color: iced::Color::TRANSPARENT,
             text_color: self.theme.foreground.to_iced(),
         }
     }
