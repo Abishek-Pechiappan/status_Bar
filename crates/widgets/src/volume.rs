@@ -2,13 +2,15 @@ use bar_core::{event::Message, state::AppState};
 use bar_theme::Theme;
 use iced::{
     mouse::ScrollDelta,
-    widget::{mouse_area, text},
-    Element,
+    widget::{mouse_area, row, slider, text},
+    Alignment, Element, Length,
 };
 
-/// Displays the default audio sink volume.
+/// Displays the default audio sink volume as an interactive slider.
 ///
-/// Interactive: scroll wheel adjusts volume ±5%, left-click toggles mute.
+/// - Drag slider to set exact volume.
+/// - Scroll wheel adjusts ±5%.
+/// - Click the icon to toggle mute.
 /// Returns `None` when wpctl is unavailable.
 #[derive(Debug, Default)]
 pub struct VolumeWidget;
@@ -33,27 +35,35 @@ impl VolumeWidget {
             "VOL"
         };
 
-        let pct   = (vol * 100.0).round() as u32;
-        let label = if state.system.volume_muted {
-            format!("{icon} muted")
-        } else {
-            format!("{icon} {pct}%")
-        };
+        let pct = (vol * 100.0).round() as u32;
 
-        let content = text(label).size(theme.font_size);
+        // Icon is clickable (mute toggle); wrap in mouse_area for scroll too.
+        let icon_el = mouse_area(
+            text(icon).size(theme.font_size),
+        )
+        .on_press(Message::VolumeMuteToggle)
+        .on_scroll(|delta| {
+            let step = match delta {
+                ScrollDelta::Lines { y, .. } | ScrollDelta::Pixels { y, .. } => {
+                    if y > 0.0 { 5 } else { -5 }
+                }
+            };
+            Message::VolumeAdjust(step)
+        });
+
+        let vol_slider = slider(0.0f32..=1.0, vol, Message::VolumeSet)
+            .step(0.01f32)
+            .width(Length::Fixed(72.0));
 
         Some(
-            mouse_area(content)
-                .on_scroll(|delta| {
-                    let step = match delta {
-                        ScrollDelta::Lines { y, .. } | ScrollDelta::Pixels { y, .. } => {
-                            if y > 0.0 { 5 } else { -5 }
-                        }
-                    };
-                    Message::VolumeAdjust(step)
-                })
-                .on_press(Message::VolumeMuteToggle)
-                .into(),
+            row![
+                icon_el,
+                vol_slider,
+                text(format!("{pct}%")).size(theme.font_size - 1.0).width(Length::Fixed(32.0)),
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center)
+            .into(),
         )
     }
 }

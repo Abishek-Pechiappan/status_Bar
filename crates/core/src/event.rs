@@ -38,8 +38,12 @@ pub enum Message {
     VolumeAdjust(i32),
     /// Click on volume widget — toggle mute.
     VolumeMuteToggle,
+    /// Drag volume slider to an exact level (0.0 = mute, 1.0 = 100%).
+    VolumeSet(f32),
     /// Scroll on brightness widget — positive = brighter, negative = dimmer (% steps).
     BrightnessAdjust(i32),
+    /// Drag brightness slider to an exact percentage (0–100).
+    BrightnessSet(f32),
     /// Click on media widget — play/pause.
     MediaPlayPause,
     /// Scroll up on media widget — skip to next track.

@@ -13,6 +13,10 @@ const ALL_WIDGETS: &[&str] = &[
     "separator", "notify",
 ];
 
+fn app_theme(_: &Editor) -> iced::Theme {
+    iced::Theme::Dark
+}
+
 fn main() -> iced::Result {
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -21,7 +25,8 @@ fn main() -> iced::Result {
     iced::application(Editor::new, Editor::update, Editor::view)
         .title("Bar Editor")
         .subscription(Editor::subscription)
-        .window_size(Size::new(860.0, 700.0))
+        .window_size(Size::new(880.0, 720.0))
+        .theme(app_theme)
         .run()
 }
 
@@ -620,19 +625,48 @@ impl Editor {
     fn view(&self) -> Element<'_, Message> {
         let preview = self.view_preview();
 
-        let tabs = row![
-            tab_btn("Global", Section::Global, self.section),
-            tab_btn("Layout", Section::Layout, self.section),
-            tab_btn("Theme",  Section::Theme,  self.section),
-        ]
-        .spacing(4);
+        // ── Sidebar ───────────────────────────────────────────────────────────
+        let sidebar: Element<'_, Message> = container(
+            column![
+                text("bar editor")
+                    .size(13.0)
+                    .color(Color::from_rgb8(0xcb, 0xa6, 0xf7)),
+                rule::horizontal(1.0f32),
+                nav_item("⚙  Global", Section::Global, self.section),
+                nav_item("⊞  Layout", Section::Layout, self.section),
+                nav_item("◈  Theme",  Section::Theme,  self.section),
+            ]
+            .spacing(4)
+            .padding([12, 8]),
+        )
+        .width(Length::Fixed(168.0))
+        .height(Length::Fill)
+        .style(|_: &iced::Theme| iced::widget::container::Style {
+            background: Some(iced::Background::Color(Color::from_rgb8(0x0f, 0x0f, 0x17))),
+            ..Default::default()
+        })
+        .into();
 
+        // ── Content ───────────────────────────────────────────────────────────
         let body: Element<'_, Message> = match self.section {
             Section::Global => self.view_global(),
             Section::Layout => self.view_layout(),
             Section::Theme  => self.view_theme(),
         };
 
+        let main_area: Element<'_, Message> = row![
+            sidebar,
+            rule::vertical(1.0f32),
+            scrollable(
+                container(body).padding([12, 14])
+            )
+            .height(Length::Fill)
+            .width(Length::Fill),
+        ]
+        .height(Length::Fill)
+        .into();
+
+        // ── Footer ────────────────────────────────────────────────────────────
         let has_structural =
             self.config.global.height     != self.launched_height
             || self.config.global.position   != self.launched_position
@@ -640,20 +674,20 @@ impl Editor {
             || self.config.global.margin_top != self.launched_margin_top;
 
         let status: Element<'_, Message> = if has_structural {
-            text("⟲ Save required — geometry changes need a bar restart")
+            text("⟲ Restart required")
                 .size(12.0)
                 .color(Color::from_rgb8(0xf9, 0xe2, 0xaf))
                 .into()
         } else {
             match &self.save_status {
-                SaveStatus::Idle        => text("● Theme changes apply live automatically")
+                SaveStatus::Idle        => text("● Live")
                     .size(12.0)
-                    .color(Color::from_rgb8(0x6c, 0x70, 0x86))
+                    .color(Color::from_rgb8(0x58, 0x5b, 0x70))
                     .into(),
                 SaveStatus::Saved       => text("✓ Saved")
                     .color(Color::from_rgb8(0xa6, 0xe3, 0xa1))
                     .into(),
-                SaveStatus::Restarting  => text("✓ Saved — restarting bar…")
+                SaveStatus::Restarting  => text("✓ Restarting…")
                     .color(Color::from_rgb8(0x89, 0xb4, 0xfa))
                     .into(),
                 SaveStatus::Error(e)    => text(format!("✗ {e}"))
@@ -662,32 +696,39 @@ impl Editor {
             }
         };
 
-        let footer = row![
-            button(text("Save")).on_press(Message::Save),
-            button(text("Reset Defaults"))
-                .on_press(Message::ResetDefaults)
-                .style(iced::widget::button::danger),
-            text(format!("  {}", self.config_path.display()))
-                .size(10.0)
-                .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
-            status,
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center);
+        let footer: Element<'_, Message> = container(
+            row![
+                button(text("Save").size(13.0)).on_press(Message::Save),
+                button(text("Reset").size(13.0))
+                    .on_press(Message::ResetDefaults)
+                    .style(iced::widget::button::danger),
+                text(format!("  {}", self.config_path.display()))
+                    .size(10.0)
+                    .color(Color::from_rgb8(0x31, 0x32, 0x44)),
+                status,
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
+        .padding([6, 12])
+        .into();
 
-        column![
-            preview,
-            tabs,
-            rule::horizontal(1.0f32),
-            scrollable(
-                container(body).padding(12)
-            )
-            .height(Length::Fill),
-            rule::horizontal(1.0f32),
-            container(footer).padding([8, 0]),
-        ]
-        .padding(12)
-        .spacing(8)
+        // ── Root ──────────────────────────────────────────────────────────────
+        container(
+            column![
+                preview,
+                rule::horizontal(1.0f32),
+                main_area,
+                rule::horizontal(1.0f32),
+                footer,
+            ],
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(|_: &iced::Theme| iced::widget::container::Style {
+            background: Some(iced::Background::Color(Color::from_rgb8(0x16, 0x16, 0x21))),
+            ..Default::default()
+        })
         .into()
     }
 
@@ -697,84 +738,80 @@ impl Editor {
         let g = &self.config.global;
 
         column![
-            section_header("⟲  Requires bar restart on save"),
-            labeled_row(
-                "Height",
-                row![
-                    slider(20.0f32..=100.0, g.height as f32, Message::HeightChanged)
-                        .step(1.0f32)
-                        .width(200),
-                    text(format!("{} px", g.height)).width(60),
+            section_card("Geometry  ·  ⟲ restart required on save",
+                column![
+                    labeled_row("Height",
+                        row![
+                            slider(20.0f32..=100.0, g.height as f32, Message::HeightChanged)
+                                .step(1.0f32).width(200),
+                            text(format!("{} px", g.height)).width(60),
+                        ]
+                        .spacing(8).align_y(Alignment::Center),
+                    ),
+                    labeled_row("Position",
+                        row![
+                            pos_btn("Top",    Position::Top,    g.position),
+                            pos_btn("Bottom", Position::Bottom, g.position),
+                        ]
+                        .spacing(4).align_y(Alignment::Center),
+                    ),
+                    labeled_row("H. Margin",
+                        row![
+                            slider(0.0f32..=100.0, g.margin as f32, Message::MarginChanged)
+                                .step(1.0f32).width(200),
+                            text(format!("{} px", g.margin)).width(60),
+                            text("floating bar").size(11.0)
+                                .color(Color::from_rgb8(0x58, 0x5b, 0x70)),
+                        ]
+                        .spacing(8).align_y(Alignment::Center),
+                    ),
+                    labeled_row("V. Margin",
+                        row![
+                            slider(0.0f32..=40.0, g.margin_top as f32, Message::MarginTopChanged)
+                                .step(1.0f32).width(200),
+                            text(format!("{} px", g.margin_top)).width(60),
+                            text("floating bar").size(11.0)
+                                .color(Color::from_rgb8(0x58, 0x5b, 0x70)),
+                        ]
+                        .spacing(8).align_y(Alignment::Center),
+                    ),
                 ]
-                .spacing(8)
-                .align_y(Alignment::Center),
+                .spacing(14),
             ),
-            labeled_row(
-                "Position",
-                row![
-                    pos_btn("Top",    Position::Top,    g.position),
-                    pos_btn("Bottom", Position::Bottom, g.position),
+            section_card("Display  ·  live",
+                column![
+                    labeled_row("Opacity",
+                        row![
+                            slider(0.0f32..=1.0, g.opacity, Message::OpacityChanged)
+                                .step(0.01f32).width(200),
+                            text(format!("{:.0}%", g.opacity * 100.0)).width(50),
+                        ]
+                        .spacing(8).align_y(Alignment::Center),
+                    ),
+                    labeled_row("Exclusive Zone",
+                        checkbox(g.exclusive_zone)
+                            .label("Reserve space so windows don't overlap the bar")
+                            .on_toggle(Message::ExclusiveZoneToggled),
+                    ),
                 ]
-                .spacing(4)
-                .align_y(Alignment::Center),
-            ),
-            labeled_row(
-                "H. Margin",
-                row![
-                    slider(0.0f32..=100.0, g.margin as f32, Message::MarginChanged)
-                        .step(1.0f32)
-                        .width(200),
-                    text(format!("{} px", g.margin)).width(60),
-                    text("floating bar").size(11.0).color(Color::from_rgb8(0x6c, 0x70, 0x86)),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            ),
-            labeled_row(
-                "V. Margin",
-                row![
-                    slider(0.0f32..=40.0, g.margin_top as f32, Message::MarginTopChanged)
-                        .step(1.0f32)
-                        .width(200),
-                    text(format!("{} px", g.margin_top)).width(60),
-                    text("floating bar").size(11.0).color(Color::from_rgb8(0x6c, 0x70, 0x86)),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            ),
-            section_header("Live — applies immediately"),
-            labeled_row(
-                "Opacity",
-                row![
-                    slider(0.0f32..=1.0, g.opacity, Message::OpacityChanged)
-                        .step(0.01f32)
-                        .width(200),
-                    text(format!("{:.0}%", g.opacity * 100.0)).width(50),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            ),
-            labeled_row(
-                "Exclusive Zone",
-                checkbox(g.exclusive_zone)
-                    .label("Reserve space so windows don't overlap the bar")
-                    .on_toggle(Message::ExclusiveZoneToggled),
+                .spacing(14),
             ),
         ]
-        .spacing(20)
+        .spacing(10)
         .into()
     }
 
     // ── Layout section ────────────────────────────────────────────────────────
 
     fn view_layout(&self) -> Element<'_, Message> {
-        row![
-            self.widget_column(Side::Left,   "Left"),
-            self.widget_column(Side::Center, "Center"),
-            self.widget_column(Side::Right,  "Right"),
-        ]
-        .spacing(16)
-        .into()
+        section_card("Widget Layout",
+            row![
+                self.widget_column(Side::Left,   "Left"),
+                self.widget_column(Side::Center, "Center"),
+                self.widget_column(Side::Right,  "Right"),
+            ]
+            .spacing(16),
+        )
     }
 
     fn widget_column(&self, side: Side, title: &'static str) -> Element<'_, Message> {
@@ -872,38 +909,34 @@ impl Editor {
 
     fn view_theme(&self) -> Element<'_, Message> {
         let t = &self.config.theme;
+        let muted = Color::from_rgb8(0x58, 0x5b, 0x70);
 
-        let nerd_active = t.icon_style.to_lowercase() != "ascii";
-        let icon_btn = |label: &'static str, use_nerd: bool| -> Element<'_, Message> {
-            let active = nerd_active == use_nerd;
-            let btn = button(text(label).size(13.0)).on_press(Message::UseNerdIcons(use_nerd));
-            if active { btn.style(iced::widget::button::primary).into() } else { btn.into() }
-        };
-
-        let ws_dots   = t.workspace_style.to_lowercase() == "dots";
-        let ws_all    = t.workspace_show_all;
+        // ── Toggle button helpers ─────────────────────────────────────────────
+        let ws_dots = t.workspace_style.to_lowercase() == "dots";
+        let ws_all  = t.workspace_show_all;
         let ws_style_btn = |label: &'static str, dots: bool| -> Element<'_, Message> {
-            let active = ws_dots == dots;
             let btn = button(text(label).size(13.0)).on_press(Message::WorkspaceStyle(dots));
-            if active { btn.style(iced::widget::button::primary).into() } else { btn.into() }
+            if ws_dots == dots { btn.style(iced::widget::button::primary).into() } else { btn.into() }
         };
         let ws_show_btn = |label: &'static str, all: bool| -> Element<'_, Message> {
-            let active = ws_all == all;
             let btn = button(text(label).size(13.0)).on_press(Message::WorkspaceShowAll(all));
-            if active { btn.style(iced::widget::button::primary).into() } else { btn.into() }
+            if ws_all == all { btn.style(iced::widget::button::primary).into() } else { btn.into() }
+        };
+
+        let nerd = t.icon_style.to_lowercase() != "ascii";
+        let icon_btn = |label: &'static str, use_nerd: bool| -> Element<'_, Message> {
+            let btn = button(text(label).size(13.0)).on_press(Message::UseNerdIcons(use_nerd));
+            if nerd == use_nerd { btn.style(iced::widget::button::primary).into() } else { btn.into() }
         };
 
         let clock_24h = t.clock_format.contains("%H");
-        let clock_fmt_btn = |label: &'static str, twentyfour: bool| -> Element<'_, Message> {
-            let active = clock_24h == twentyfour;
-            let btn = button(text(label).size(13.0)).on_press(Message::ClockFormatPreset(twentyfour));
-            if active { btn.style(iced::widget::button::primary).into() } else { btn.into() }
+        let clock_btn = |label: &'static str, is24: bool| -> Element<'_, Message> {
+            let btn = button(text(label).size(13.0)).on_press(Message::ClockFormatPreset(is24));
+            if clock_24h == is24 { btn.style(iced::widget::button::primary).into() } else { btn.into() }
         };
 
-        let net_tokens: Vec<&str> = t.network_show.split(',').map(str::trim).collect();
-        let net_speed  = net_tokens.contains(&"speed");
-        let net_name   = net_tokens.contains(&"name");
-        let net_signal = net_tokens.contains(&"signal");
+        let toks: Vec<&str> = t.network_show.split(',').map(str::trim).collect();
+        let (ns, nn, nsi) = (toks.contains(&"speed"), toks.contains(&"name"), toks.contains(&"signal"));
         let net_btn = |label: &'static str, active: bool, msg: Message| -> Element<'_, Message> {
             let btn = button(text(label).size(13.0)).on_press(msg);
             if active { btn.style(iced::widget::button::primary).into() } else { btn.into() }
@@ -915,216 +948,141 @@ impl Editor {
             if self.active_picker == Some(field) { Some((ps, pa)) } else { None }
         };
 
-        // Build theme preset buttons
         let preset_btns: Vec<Element<'_, Message>> = THEME_PRESETS
             .iter()
             .enumerate()
-            .map(|(i, p)| {
-                button(text(p.name).size(12.0))
-                    .on_press(Message::ApplyThemePreset(i))
-                    .into()
-            })
+            .map(|(i, p)| button(text(p.name).size(12.0)).on_press(Message::ApplyThemePreset(i)).into())
             .collect();
 
         column![
-            // ── Widget Behaviour ──────────────────────────────────────────────
-            section_header("Widget Behaviour"),
-            labeled_row(
-                "Workspace Style",
-                row![
-                    ws_style_btn("Numbers", false),
-                    ws_style_btn("Dots", true),
+            section_card("Widget Behaviour",
+                column![
+                    labeled_row("Workspace Style",
+                        row![ws_style_btn("Numbers", false), ws_style_btn("Dots", true)].spacing(4)),
+                    labeled_row("Workspace Visible",
+                        row![ws_show_btn("All", true), ws_show_btn("Active Only", false)].spacing(4)),
+                    labeled_row("Network Display",
+                        row![
+                            net_btn("Speed",  ns,  Message::NetworkShowSpeed(!ns)),
+                            net_btn("Name",   nn,  Message::NetworkShowName(!nn)),
+                            net_btn("Signal", nsi, Message::NetworkShowSignal(!nsi)),
+                            text("any combination").size(11.0).color(muted),
+                        ].spacing(4).align_y(Alignment::Center)),
+                    labeled_row("Icon Style",
+                        row![
+                            icon_btn("Nerd Font", true),
+                            icon_btn("ASCII", false),
+                            text("use ASCII if icons show ?").size(11.0).color(muted),
+                        ].spacing(4).align_y(Alignment::Center)),
+                    labeled_row("Clock Format",
+                        row![
+                            clock_btn("24h", true),
+                            clock_btn("12h", false),
+                            text_input("%H:%M", &self.clock_format_buf)
+                                .on_input(Message::ClockFormatChanged).width(120),
+                            text("strftime").size(11.0).color(muted),
+                        ].spacing(4).align_y(Alignment::Center)),
+                    labeled_row("Date Format",
+                        row![
+                            text_input("%a %d %b", &self.date_format_buf)
+                                .on_input(Message::DateFormatChanged).width(130),
+                            text("strftime").size(11.0).color(muted),
+                        ].spacing(4).align_y(Alignment::Center)),
                 ]
-                .spacing(4),
+                .spacing(14),
             ),
-            labeled_row(
-                "Workspace Visible",
-                row![
-                    ws_show_btn("All", true),
-                    ws_show_btn("Active Only", false),
+            section_card("Colors",
+                column![
+                    color_input_optional("Background",       &self.bg_buf,                  &t.background,          Message::BgChanged,
+                        ColorField::Background,       picker_for(ColorField::Background)),
+                    color_input("Text Color",                &self.fg_buf,                  &t.foreground,          Message::FgChanged,
+                        ColorField::Foreground,       picker_for(ColorField::Foreground)),
+                    color_input("Accent",                    &self.accent_buf,              &t.accent,              Message::AccentChanged,
+                        ColorField::Accent,           picker_for(ColorField::Accent)),
+                    color_input_optional("Widget Bg",        &self.widget_bg_buf,           &t.widget_bg,           Message::WidgetBgChanged,
+                        ColorField::WidgetBg,         picker_for(ColorField::WidgetBg)),
+                    color_input_optional("Bar Border",       &self.border_color_buf,        &t.border_color,        Message::BorderColorChanged,
+                        ColorField::BorderColor,      picker_for(ColorField::BorderColor)),
+                    color_input_optional("Widget Border",    &self.widget_border_color_buf, &t.widget_border_color, Message::WidgetBorderColorChanged,
+                        ColorField::WidgetBorderColor, picker_for(ColorField::WidgetBorderColor)),
                 ]
-                .spacing(4),
+                .spacing(10),
             ),
-            labeled_row(
-                "Network Display",
-                row![
-                    net_btn("Speed",  net_speed,  Message::NetworkShowSpeed(!net_speed)),
-                    net_btn("Name",   net_name,   Message::NetworkShowName(!net_name)),
-                    net_btn("Signal", net_signal, Message::NetworkShowSignal(!net_signal)),
-                    text("select any combination").size(11.0)
-                        .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+            section_card("Shape & Spacing",
+                column![
+                    labeled_row("Bar Border Width",
+                        row![
+                            slider(0.0f32..=8.0, t.border_width as f32, Message::BorderWidthChanged)
+                                .step(1.0f32).width(180),
+                            text(format!("{} px", t.border_width)).width(50),
+                        ].spacing(8).align_y(Alignment::Center)),
+                    labeled_row("Widget Border",
+                        row![
+                            slider(0.0f32..=8.0, t.widget_border_width as f32, Message::WidgetBorderWidthChanged)
+                                .step(1.0f32).width(180),
+                            text(format!("{} px", t.widget_border_width)).width(50),
+                        ].spacing(8).align_y(Alignment::Center)),
+                    labeled_row("Border Radius",
+                        row![
+                            slider(0.0f32..=40.0, t.border_radius, Message::RadiusChanged)
+                                .step(0.5f32).width(180),
+                            text(format!("{:.1} px", t.border_radius)).width(50),
+                        ].spacing(8).align_y(Alignment::Center)),
+                    labeled_row("Padding",
+                        row![
+                            slider(0.0f32..=32.0, t.padding as f32, Message::PaddingChanged)
+                                .step(1.0f32).width(180),
+                            text(format!("{} px", t.padding)).width(50),
+                        ].spacing(8).align_y(Alignment::Center)),
+                    labeled_row("Gap",
+                        row![
+                            slider(0.0f32..=24.0, t.gap as f32, Message::GapChanged)
+                                .step(1.0f32).width(180),
+                            text(format!("{} px", t.gap)).width(50),
+                        ].spacing(8).align_y(Alignment::Center)),
+                    labeled_row("Widget Pad X",
+                        row![
+                            slider(0.0f32..=32.0, t.widget_padding_x as f32, Message::WidgetPadXChanged)
+                                .step(1.0f32).width(180),
+                            text(format!("{} px", t.widget_padding_x)).width(50),
+                        ].spacing(8).align_y(Alignment::Center)),
+                    labeled_row("Widget Pad Y",
+                        row![
+                            slider(0.0f32..=20.0, t.widget_padding_y as f32, Message::WidgetPadYChanged)
+                                .step(1.0f32).width(180),
+                            text(format!("{} px", t.widget_padding_y)).width(50),
+                        ].spacing(8).align_y(Alignment::Center)),
                 ]
-                .spacing(4)
-                .align_y(Alignment::Center),
+                .spacing(14),
             ),
-            labeled_row(
-                "Icon Style",
-                row![
-                    icon_btn("Nerd Font", true),
-                    icon_btn("ASCII", false),
-                    text("use ASCII if icons show as \"?\"").size(11.0)
-                        .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+            section_card("Font",
+                column![
+                    labeled_row("Font Family",
+                        text_input("Font name", &self.font_buf)
+                            .on_input(Message::FontChanged).width(200)),
+                    labeled_row("Font Size",
+                        row![
+                            slider(8.0f32..=32.0, t.font_size, Message::FontSizeChanged)
+                                .step(0.5f32).width(180),
+                            text(format!("{:.1} pt", t.font_size)).width(50),
+                        ].spacing(8).align_y(Alignment::Center)),
                 ]
-                .spacing(4)
-                .align_y(Alignment::Center),
+                .spacing(14),
             ),
-            labeled_row(
-                "Clock Format",
-                row![
-                    clock_fmt_btn("24h", true),
-                    clock_fmt_btn("12h", false),
-                    text_input("%H:%M", &self.clock_format_buf)
-                        .on_input(Message::ClockFormatChanged)
-                        .width(130),
-                    text("strftime").size(11.0).color(Color::from_rgb8(0x6c, 0x70, 0x86)),
-                ]
-                .spacing(4)
-                .align_y(Alignment::Center),
-            ),
-            labeled_row(
-                "Date Format",
-                row![
-                    text_input("%a %d %b", &self.date_format_buf)
-                        .on_input(Message::DateFormatChanged)
-                        .width(150),
-                    text("strftime format").size(11.0).color(Color::from_rgb8(0x6c, 0x70, 0x86)),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            ),
-            // ── Colors ────────────────────────────────────────────────────────
-            section_header("Colors"),
-            color_input_optional("Background",        &self.bg_buf,           &t.background,   Message::BgChanged,
-                ColorField::Background, picker_for(ColorField::Background)),
-            color_input("Text Color",         &self.fg_buf,           &t.foreground,   Message::FgChanged,
-                ColorField::Foreground, picker_for(ColorField::Foreground)),
-            color_input("Accent",             &self.accent_buf,       &t.accent,       Message::AccentChanged,
-                ColorField::Accent, picker_for(ColorField::Accent)),
-            color_input_optional("Widget Background", &self.widget_bg_buf,    &t.widget_bg,    Message::WidgetBgChanged,
-                ColorField::WidgetBg, picker_for(ColorField::WidgetBg)),
-            color_input_optional("Border Color",      &self.border_color_buf, &t.border_color, Message::BorderColorChanged,
-                ColorField::BorderColor, picker_for(ColorField::BorderColor)),
-            color_input_optional("Widget Border",     &self.widget_border_color_buf, &t.widget_border_color, Message::WidgetBorderColorChanged,
-                ColorField::WidgetBorderColor, picker_for(ColorField::WidgetBorderColor)),
-            // ── Shape & Spacing ───────────────────────────────────────────────
-            section_header("Shape & Spacing"),
-            labeled_row(
-                "Border Width",
-                row![
-                    slider(0.0f32..=8.0, t.border_width as f32, Message::BorderWidthChanged)
-                        .step(1.0f32)
-                        .width(200),
-                    text(format!("{} px", t.border_width)).width(60),
-                    text("bar outer border").size(11.0).color(Color::from_rgb8(0x6c, 0x70, 0x86)),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            ),
-            labeled_row(
-                "Widget Border Width",
-                row![
-                    slider(0.0f32..=8.0, t.widget_border_width as f32, Message::WidgetBorderWidthChanged)
-                        .step(1.0f32)
-                        .width(200),
-                    text(format!("{} px", t.widget_border_width)).width(60),
-                    text("per-widget pill border").size(11.0).color(Color::from_rgb8(0x6c, 0x70, 0x86)),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            ),
-            labeled_row(
-                "Border Radius",
-                row![
-                    slider(0.0f32..=40.0, t.border_radius, Message::RadiusChanged)
-                        .step(0.5f32)
-                        .width(200),
-                    text(format!("{:.1} px", t.border_radius)).width(60),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            ),
-            labeled_row(
-                "Padding",
-                row![
-                    slider(0.0f32..=32.0, t.padding as f32, Message::PaddingChanged)
-                        .step(1.0f32)
-                        .width(200),
-                    text(format!("{} px", t.padding)).width(60),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            ),
-            labeled_row(
-                "Gap",
-                row![
-                    slider(0.0f32..=24.0, t.gap as f32, Message::GapChanged)
-                        .step(1.0f32)
-                        .width(200),
-                    text(format!("{} px", t.gap)).width(60),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            ),
-            labeled_row(
-                "Widget Pad X",
-                row![
-                    slider(0.0f32..=32.0, t.widget_padding_x as f32, Message::WidgetPadXChanged)
-                        .step(1.0f32)
-                        .width(200),
-                    text(format!("{} px", t.widget_padding_x)).width(60),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            ),
-            labeled_row(
-                "Widget Pad Y",
-                row![
-                    slider(0.0f32..=20.0, t.widget_padding_y as f32, Message::WidgetPadYChanged)
-                        .step(1.0f32)
-                        .width(200),
-                    text(format!("{} px", t.widget_padding_y)).width(60),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            ),
-            // ── Font ──────────────────────────────────────────────────────────
-            section_header("Font"),
-            labeled_row(
-                "Font Family",
-                text_input("Font name", &self.font_buf)
-                    .on_input(Message::FontChanged)
-                    .width(200),
-            ),
-            labeled_row(
-                "Font Size",
-                row![
-                    slider(8.0f32..=32.0, t.font_size, Message::FontSizeChanged)
-                        .step(0.5f32)
-                        .width(200),
-                    text(format!("{:.1} pt", t.font_size)).width(60),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            ),
-            // ── Theme Presets ─────────────────────────────────────────────────
-            section_header("Theme Presets"),
-            labeled_row(
-                "Presets",
+            section_card("Presets",
                 column![
                     iced::widget::Row::from_vec(preset_btns).spacing(4).wrap(),
                     row![
-                        button(text("⬇ Import pywal").size(12.0))
-                            .on_press(Message::ImportWal),
-                        text("Imports ~/.cache/wal/colors.json").size(11.0)
-                            .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+                        button(text("⬇ Import pywal").size(12.0)).on_press(Message::ImportWal),
+                        text("~/.cache/wal/colors.json").size(11.0).color(muted),
                     ]
                     .spacing(8)
                     .align_y(Alignment::Center),
                 ]
-                .spacing(6),
+                .spacing(8),
             ),
         ]
-        .spacing(20)
+        .spacing(10)
         .into()
     }
 }
@@ -1144,22 +1102,62 @@ fn labeled_row<'a>(
     .into()
 }
 
-fn section_header(title: &'static str) -> Element<'static, Message> {
-    column![
-        rule::horizontal(1.0f32),
-        text(title).size(11.0).color(Color::from_rgb8(0x6c, 0x70, 0x86)),
-    ]
-    .spacing(4)
+// ── Sidebar nav item ──────────────────────────────────────────────────────────
+
+fn nav_item(label: &'static str, target: Section, current: Section) -> Element<'static, Message> {
+    let active = target == current;
+    button(
+        text(label)
+            .size(13.0)
+            .color(if active {
+                Color::from_rgb8(0xcb, 0xa6, 0xf7)
+            } else {
+                Color::from_rgb8(0x58, 0x5b, 0x70)
+            }),
+    )
+    .on_press(Message::Tab(target))
+    .width(Length::Fill)
+    .padding([9, 12])
+    .style(move |_: &iced::Theme, _| iced::widget::button::Style {
+        background: if active {
+            Some(iced::Background::Color(Color::from_rgba8(0xcb, 0xa6, 0xf7, 0.14)))
+        } else {
+            None
+        },
+        border: iced::Border { radius: 6.0.into(), ..Default::default() },
+        text_color: if active {
+            Color::from_rgb8(0xcb, 0xa6, 0xf7)
+        } else {
+            Color::from_rgb8(0x58, 0x5b, 0x70)
+        },
+        ..Default::default()
+    })
     .into()
 }
 
-fn tab_btn(label: &str, target: Section, current: Section) -> Element<'_, Message> {
-    let btn = button(text(label).size(14.0)).on_press(Message::Tab(target));
-    if target == current {
-        btn.style(iced::widget::button::primary).into()
-    } else {
-        btn.into()
-    }
+// ── Section card ──────────────────────────────────────────────────────────────
+
+fn section_card<'a>(title: &'static str, content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    container(
+        column![
+            text(title).size(11.0).color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+            rule::horizontal(1.0f32),
+            content.into(),
+        ]
+        .spacing(10),
+    )
+    .padding([12, 16])
+    .width(Length::Fill)
+    .style(|_: &iced::Theme| iced::widget::container::Style {
+        background: Some(iced::Background::Color(Color::from_rgb8(0x1a, 0x1a, 0x2e))),
+        border: iced::Border {
+            color: Color::from_rgb8(0x2a, 0x2a, 0x40),
+            width: 1.0,
+            radius: 8.0.into(),
+        },
+        ..Default::default()
+    })
+    .into()
 }
 
 fn pos_btn(label: &str, target: Position, current: Position) -> Element<'_, Message> {

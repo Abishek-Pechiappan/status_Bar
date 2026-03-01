@@ -291,6 +291,29 @@ impl Bar {
                     |_| Message::Tick,
                 );
             }
+            AppMessage::VolumeSet(val) => {
+                return Task::perform(
+                    async move {
+                        let _ = tokio::process::Command::new("wpctl")
+                            .args(["set-volume", "@DEFAULT_AUDIO_SINK@", &format!("{val:.2}")])
+                            .output()
+                            .await;
+                    },
+                    |_| Message::Tick,
+                );
+            }
+            AppMessage::BrightnessSet(pct) => {
+                let pct = (pct.round() as u32).clamp(1, 100);
+                return Task::perform(
+                    async move {
+                        let _ = tokio::process::Command::new("brightnessctl")
+                            .args(["set", &format!("{pct}%")])
+                            .output()
+                            .await;
+                    },
+                    |_| Message::Tick,
+                );
+            }
             AppMessage::BrightnessAdjust(delta) => {
                 let arg = if delta >= 0 {
                     format!("{delta}%+")
