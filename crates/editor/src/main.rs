@@ -200,6 +200,7 @@ enum Message {
     NetworkShowSpeed(bool),
     NetworkShowName(bool),
     NetworkShowSignal(bool),
+    ClockFormatPreset(bool),  // true = 24h, false = 12h
     WidgetBorderColorChanged(String),
     WidgetBorderWidthChanged(f32),
     // Colour picker
@@ -472,6 +473,11 @@ impl Editor {
             }
             Message::WidgetBorderWidthChanged(v) => self.config.theme.widget_border_width = v as u32,
 
+            Message::ClockFormatPreset(twentyfour) => {
+                let fmt = if twentyfour { "%H:%M".to_string() } else { "%I:%M %p".to_string() };
+                self.clock_format_buf        = fmt.clone();
+                self.config.theme.clock_format = fmt;
+            }
             Message::ClockFormatChanged(s) => {
                 self.clock_format_buf = s.clone();
                 self.config.theme.clock_format = s;
@@ -880,6 +886,13 @@ impl Editor {
             if active { btn.style(iced::widget::button::primary).into() } else { btn.into() }
         };
 
+        let clock_24h = t.clock_format.contains("%H");
+        let clock_fmt_btn = |label: &'static str, twentyfour: bool| -> Element<'_, Message> {
+            let active = clock_24h == twentyfour;
+            let btn = button(text(label).size(13.0)).on_press(Message::ClockFormatPreset(twentyfour));
+            if active { btn.style(iced::widget::button::primary).into() } else { btn.into() }
+        };
+
         let net_tokens: Vec<&str> = t.network_show.split(',').map(str::trim).collect();
         let net_speed  = net_tokens.contains(&"speed");
         let net_name   = net_tokens.contains(&"name");
@@ -951,12 +964,14 @@ impl Editor {
             labeled_row(
                 "Clock Format",
                 row![
+                    clock_fmt_btn("24h", true),
+                    clock_fmt_btn("12h", false),
                     text_input("%H:%M", &self.clock_format_buf)
                         .on_input(Message::ClockFormatChanged)
-                        .width(150),
-                    text("strftime format").size(11.0).color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+                        .width(130),
+                    text("strftime").size(11.0).color(Color::from_rgb8(0x6c, 0x70, 0x86)),
                 ]
-                .spacing(8)
+                .spacing(4)
                 .align_y(Alignment::Center),
             ),
             labeled_row(
