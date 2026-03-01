@@ -150,6 +150,10 @@ pub struct ThemeConfig {
     /// When `true` (default), all open workspaces are shown.
     /// When `false`, only the active workspace is shown.
     pub workspace_show_all: bool,
+    /// What the network widget displays.  Comma-separated list of:
+    /// `"speed"` (↓rx ↑tx), `"name"` (interface name), `"signal"` (WiFi dBm/bars).
+    /// Default: `"speed"`.  Example: `"speed,signal"` or `"name,speed"`.
+    pub network_show: String,
 }
 
 impl Default for ThemeConfig {
@@ -173,6 +177,7 @@ impl Default for ThemeConfig {
             widget_padding_y:  4,
             workspace_style:   "numbers".to_string(),
             workspace_show_all: true,
+            network_show:      "speed".to_string(),
         }
     }
 }

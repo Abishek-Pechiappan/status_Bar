@@ -78,10 +78,14 @@ pub struct SystemSnapshot {
     pub disk_used: u64,
     /// Root filesystem: total bytes.
     pub disk_total: u64,
-    /// Network receive rate in bytes/second.
+    /// Network receive rate in bytes/second (sum of all interfaces).
     pub net_rx: u64,
-    /// Network transmit rate in bytes/second.
+    /// Network transmit rate in bytes/second (sum of all interfaces).
     pub net_tx: u64,
+    /// Name of the primary active network interface (e.g. `"wlan0"`, `"eth0"`).
+    pub net_interface: String,
+    /// WiFi signal level in dBm for the primary interface, `None` if not wireless.
+    pub net_signal: Option<i32>,
     /// Battery charge level (0–100), `None` if no battery present.
     pub battery_percent: Option<u8>,
     /// `true` = charging / full, `false` = discharging, `None` = unknown.

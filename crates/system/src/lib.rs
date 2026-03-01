@@ -78,6 +78,20 @@ async fn take_snapshot(
     let net_rx = (raw_rx as f64 / interval_secs) as u64;
     let net_tx = (raw_tx as f64 / interval_secs) as u64;
 
+    // Primary interface: highest combined traffic, excluding loopback.
+    let net_interface = networks
+        .iter()
+        .filter(|(name, _)| *name != "lo")
+        .max_by_key(|(_, d)| d.received().saturating_add(d.transmitted()))
+        .map(|(name, _)| name.clone())
+        .unwrap_or_default();
+
+    let net_signal = if net_interface.is_empty() {
+        None
+    } else {
+        read_wifi_signal(&net_interface)
+    };
+
     // ── Battery ──────────────────────────────────────────────────────────────
     let (battery_percent, battery_charging) = match battery::read_battery() {
         Some((pct, chg)) => (Some(pct), Some(chg)),
@@ -118,6 +132,8 @@ async fn take_snapshot(
         disk_total,
         net_rx,
         net_tx,
+        net_interface,
+        net_signal,
         battery_percent,
         battery_charging,
         battery_time_min,
@@ -236,6 +252,28 @@ async fn playerctl_get(args: &[&str]) -> Option<String> {
     } else {
         None
     }
+}
+
+/// Read WiFi signal level in dBm for `iface` from `/proc/net/wireless`.
+///
+/// Returns `None` for wired interfaces (not listed in that file) or if the
+/// file cannot be read.  The level column value is typically a negative dBm
+/// integer followed by a period (e.g. `-43.`).
+fn read_wifi_signal(iface: &str) -> Option<i32> {
+    let content = std::fs::read_to_string("/proc/net/wireless").ok()?;
+    for line in content.lines().skip(2) {
+        let line = line.trim();
+        // Lines look like:  wlan0: 0000   67.  -43.  -256.  ...
+        let (name, rest) = line.split_once(':')?;
+        if name.trim() != iface { continue; }
+        // Fields after the colon: status  link  level  noise …
+        let mut parts = rest.split_whitespace();
+        let _ = parts.next(); // status
+        let _ = parts.next(); // link quality
+        let level = parts.next()?;
+        return level.trim_end_matches('.').parse::<i32>().ok();
+    }
+    None
 }
 
 /// Run an arbitrary shell command and return its trimmed stdout.

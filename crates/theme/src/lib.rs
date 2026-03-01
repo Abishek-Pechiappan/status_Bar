@@ -40,6 +40,12 @@ pub struct Theme {
     pub workspace_dots:     bool,
     /// When `true`, all open workspaces are shown; `false` = active only.
     pub workspace_show_all: bool,
+    /// Show ↓rx ↑tx speed in the network widget.
+    pub network_show_speed:  bool,
+    /// Show the primary interface name (e.g. `wlan0`) in the network widget.
+    pub network_show_name:   bool,
+    /// Show WiFi signal strength in the network widget.
+    pub network_show_signal: bool,
 }
 
 impl Theme {
@@ -67,6 +73,9 @@ impl Theme {
             widget_pad_y:       cfg.widget_padding_y,
             workspace_dots:     cfg.workspace_style.to_lowercase() == "dots",
             workspace_show_all: cfg.workspace_show_all,
+            network_show_speed:  cfg.network_show.contains("speed"),
+            network_show_name:   cfg.network_show.contains("name"),
+            network_show_signal: cfg.network_show.contains("signal"),
         }
     }
 }

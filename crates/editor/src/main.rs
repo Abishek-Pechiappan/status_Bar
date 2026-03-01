@@ -195,6 +195,9 @@ enum Message {
     WidgetPadYChanged(f32),
     WorkspaceStyle(bool),   // true = dots, false = numbers
     WorkspaceShowAll(bool), // true = all, false = active only
+    NetworkShowSpeed(bool),
+    NetworkShowName(bool),
+    NetworkShowSignal(bool),
     // Colour picker
     TogglePicker(ColorField),
     ColorGridPicked(f32, f32, f32),  // h, s, v from the grid cell
@@ -470,6 +473,9 @@ impl Editor {
                     if dots { "dots".to_string() } else { "numbers".to_string() };
             }
             Message::WorkspaceShowAll(all) => self.config.theme.workspace_show_all = all,
+            Message::NetworkShowSpeed(v) => toggle_network_show(&mut self.config.theme.network_show, "speed",  v),
+            Message::NetworkShowName(v)  => toggle_network_show(&mut self.config.theme.network_show, "name",   v),
+            Message::NetworkShowSignal(v)=> toggle_network_show(&mut self.config.theme.network_show, "signal", v),
 
             // ── Colour picker ────────────────────────────────────────────────
             Message::TogglePicker(field) => {
@@ -852,6 +858,15 @@ impl Editor {
             if active { btn.style(iced::widget::button::primary).into() } else { btn.into() }
         };
 
+        let net_tokens: Vec<&str> = t.network_show.split(',').map(str::trim).collect();
+        let net_speed  = net_tokens.contains(&"speed");
+        let net_name   = net_tokens.contains(&"name");
+        let net_signal = net_tokens.contains(&"signal");
+        let net_btn = |label: &'static str, active: bool, msg: Message| -> Element<'_, Message> {
+            let btn = button(text(label).size(13.0)).on_press(msg);
+            if active { btn.style(iced::widget::button::primary).into() } else { btn.into() }
+        };
+
         let ps = self.picker_sat;
         let pa = self.picker_alpha;
         let picker_for = |field: ColorField| -> Option<(f32, f32)> {
@@ -900,6 +915,16 @@ impl Editor {
                 row![
                     ws_show_btn("All", true),
                     ws_show_btn("Active Only", false),
+                ]
+                .spacing(4),
+            ),
+            // ── Network display ───────────────────────────────────────────────
+            labeled_row(
+                "Network Show",
+                row![
+                    net_btn("Speed",  net_speed,  Message::NetworkShowSpeed(!net_speed)),
+                    net_btn("Name",   net_name,   Message::NetworkShowName(!net_name)),
+                    net_btn("Signal", net_signal, Message::NetworkShowSignal(!net_signal)),
                 ]
                 .spacing(4),
             ),
@@ -1344,6 +1369,17 @@ fn extract_json_string(json: &str, key: &str) -> Option<String> {
     let after  = after.strip_prefix('"')?;
     let end    = after.find('"')?;
     Some(after[..end].to_string())
+}
+
+/// Add or remove a token (e.g. "speed", "name", "signal") from the comma-separated
+/// `network_show` string without affecting the other tokens.
+fn toggle_network_show(field: &mut String, token: &str, enable: bool) {
+    let mut parts: Vec<&str> = field.split(',').map(str::trim).filter(|s| !s.is_empty()).collect();
+    parts.retain(|t| *t != token);
+    if enable {
+        parts.push(token);
+    }
+    *field = parts.join(",");
 }
 
 fn save_config(config: &BarConfig, path: &std::path::Path) -> Result<(), String> {
