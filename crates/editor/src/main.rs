@@ -10,7 +10,7 @@ const ALL_WIDGETS: &[&str] = &[
     "cpu", "memory", "network", "battery",
     "disk", "temperature", "volume", "brightness",
     "swap", "uptime", "load", "keyboard", "media", "custom",
-    "separator", "notify", "tray",
+    "separator", "notify", "tray", "power",
 ];
 
 fn app_theme(_: &Editor) -> iced::Theme {

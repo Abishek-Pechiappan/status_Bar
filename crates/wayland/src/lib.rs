@@ -17,8 +17,8 @@ use bar_theme::{Color as ThemeColor, Theme};
 use bar_widgets::{
     BatteryWidget, BrightnessWidget, ClockWidget, CpuWidget, CustomWidget, DiskWidget,
     KeyboardWidget, LoadWidget, MediaWidget, MemoryWidget, NetworkWidget, NotifyWidget,
-    SeparatorWidget, SwapWidget, TempWidget, TitleWidget, TrayWidget, UptimeWidget, VolumeWidget,
-    WorkspaceWidget,
+    PowerWidget, SeparatorWidget, SwapWidget, TempWidget, TitleWidget, TrayWidget, UptimeWidget,
+    VolumeWidget, WorkspaceWidget,
 };
 use chrono::Local;
 use futures::channel::mpsc::Sender;
@@ -119,6 +119,7 @@ struct Bar {
     separator:  SeparatorWidget,
     notify:     NotifyWidget,
     tray:       TrayWidget,
+    power:      PowerWidget,
 }
 
 impl Bar {
@@ -150,6 +151,7 @@ impl Bar {
             separator:  SeparatorWidget::new(),
             notify:     NotifyWidget::new(),
             tray:       TrayWidget::new(),
+            power:      PowerWidget::new(),
         };
 
         let init_task = Task::perform(
@@ -391,6 +393,13 @@ impl Bar {
                 );
             }
 
+            // ── Power menu ────────────────────────────────────────────────────
+            AppMessage::PowerMenuOpen => {
+                tokio::spawn(async {
+                    let _ = tokio::process::Command::new("bar-powermenu").spawn();
+                });
+            }
+
             // ── Tray / window list ────────────────────────────────────────────
             AppMessage::ClientsUpdated(clients) => {
                 self.state.clients = clients;
@@ -436,6 +445,7 @@ impl Bar {
             "custom"      => self.custom.view(&self.state, &self.theme),
             "separator"   => Some(self.separator.view(&self.state, &self.theme)),
             "tray"        => Some(self.tray.view(&self.state, &self.theme)),
+            "power"       => Some(self.power.view(&self.state, &self.theme)),
             other => {
                 warn!("Unknown widget kind in config: {other}");
                 None

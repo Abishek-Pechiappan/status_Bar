@@ -317,6 +317,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bar-powermenu"
+version = "0.1.0"
+dependencies = [
+ "bar-config",
+ "bar-theme",
+ "iced",
+ "iced_layershell",
+ "tokio",
+]
+
+[[package]]
 name = "bar-renderer"
 version = "0.1.0"
 dependencies = [

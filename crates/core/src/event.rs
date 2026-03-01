@@ -72,6 +72,10 @@ pub enum Message {
     /// User pressed "Clear all" in the notification panel.
     NotifyClearAll,
 
+    // ── Power menu ───────────────────────────────────────────────────────────
+    /// User clicked the power widget — spawn `bar-powermenu`.
+    PowerMenuOpen,
+
     // ── Tray / window list ────────────────────────────────────────────────────
     /// Fresh list of all open clients from `hyprctl clients -j`.
     ClientsUpdated(Vec<ClientInfo>),
