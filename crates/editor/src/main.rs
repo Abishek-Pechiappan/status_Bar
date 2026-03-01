@@ -294,7 +294,14 @@ impl Editor {
                             .args(["-x", "bar"])
                             .status();
                         std::thread::sleep(std::time::Duration::from_millis(400));
-                        let _ = std::process::Command::new("bar").spawn();
+                        // Try system-wide path first, fall back to user-local path.
+                        let launched = std::process::Command::new("/usr/local/bin/bar").spawn();
+                        if launched.is_err() {
+                            let home = std::env::var("HOME").unwrap_or_default();
+                            let _ = std::process::Command::new(
+                                format!("{home}/.local/bin/bar")
+                            ).spawn();
+                        }
                     });
                 } else {
                     self.save_status = SaveStatus::Saved;
