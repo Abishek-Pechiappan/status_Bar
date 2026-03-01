@@ -129,6 +129,10 @@ pub struct ThemeConfig {
     pub gap: u16,
     /// Widget container background color (hex).  Empty string = transparent.
     pub widget_bg: String,
+    /// Widget container border color (hex).  Empty string = no border.
+    pub widget_border_color: String,
+    /// Widget container border width in logical pixels (0 = no border).
+    pub widget_border_width: u32,
     /// Bar border color (hex).  Empty string = no border.
     pub border_color: String,
     /// Bar border width in logical pixels (0 = no border).
@@ -167,9 +171,11 @@ impl Default for ThemeConfig {
             border_radius:     6.0,
             padding:           8,
             gap:               4,
-            widget_bg:         String::new(), // transparent by default
-            border_color:      String::new(), // no border by default
-            border_width:      0,
+            widget_bg:           String::new(), // transparent by default
+            widget_border_color: String::new(), // no widget border by default
+            widget_border_width: 0,
+            border_color:        String::new(), // no bar border by default
+            border_width:        0,
             clock_format:      "%H:%M".to_string(),
             date_format:       "%a %d %b".to_string(),
             icon_style:        "nerd".to_string(),

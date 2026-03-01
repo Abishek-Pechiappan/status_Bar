@@ -16,22 +16,35 @@ A Wayland-native status bar for Hyprland. Built in Rust, themed with Catppuccin 
 - **Wayland-native** — built on `iced-layershell` / wlr-layer-shell; exclusive zone keeps windows from overlapping
 - **Low resource usage** — async Tokio runtime, batched system updates, no unnecessary redraws
 - **Catppuccin Mocha** default theme; fully customizable
+- **Notification panel** — acts as an `org.freedesktop.Notifications` D-Bus daemon; shows a count badge and expands a drop-down panel on click. Falls back to polling `dunstctl history` automatically when dunst/mako is already running
+- **Floating bar mode** — set `margin` (horizontal) and `margin_top` (vertical) in `[global]` to float the bar away from screen edges with full compositor-level transparency underneath
+- **19 built-in widgets** — from workspaces and media controls to battery, brightness, custom shell commands, and notifications
 
 ### Widgets
 
-| Widget | Position | Description |
-|---|---|---|
-| `workspaces` | left | Clickable workspace buttons with active highlight |
-| `title` | left | Active window title (truncated at 60 chars) |
-| `clock` | center | Time and date (configurable strftime format) |
-| `cpu` | right | Average CPU usage percentage |
-| `memory` | right | RAM used / total |
-| `network` | right | Download / upload rates (bytes/sec) |
-| `battery` | right | Battery level with icon; auto-hidden on desktops |
-| `disk` | right | Root filesystem used / total; auto-hidden if unavailable |
-| `temperature` | right | CPU package temperature in °C; auto-hidden if no sensor |
-| `volume` | right | Audio sink volume with mute indicator (requires `wpctl`) |
-| `brightness` | right | Screen brightness %; auto-hidden if no backlight |
+| Widget | Description |
+|---|---|
+| `workspaces` | Clickable workspace buttons with active highlight |
+| `title` | Active window title (truncated at 60 chars) |
+| `clock` | Time and date (configurable strftime format) |
+| `cpu` | Average CPU usage percentage |
+| `memory` | RAM used / total |
+| `network` | Download/upload speed; optionally shows interface name and WiFi signal strength (configurable) |
+| `battery` | Battery level with icon; auto-hidden on desktops |
+| `disk` | Root filesystem used / total; auto-hidden if unavailable |
+| `temperature` | CPU package temperature in °C; auto-hidden if no sensor |
+| `volume` | Audio sink volume with mute indicator (requires `wpctl`) |
+| `brightness` | Screen brightness %; auto-hidden if no backlight |
+| `swap` | Swap space used / total; auto-hidden if no swap |
+| `uptime` | System uptime (e.g. `3d 14h 22m`) |
+| `load` | 1 / 5 / 15-minute load averages |
+| `keyboard` | Active keyboard layout name (from Hyprland `activelayout` event) |
+| `media` | Current media track title + artist; requires `playerctl` |
+| `custom` | Output of any shell command (set `custom_command` in `[global]`) |
+| `separator` | Visual spacer / divider between widgets |
+| `notify` | Notification count badge; click to expand drop-down panel |
+
+Place any widget in `[[left]]`, `[[center]]`, or `[[right]]` — there are no restrictions.
 
 ---
 
@@ -133,6 +146,20 @@ padding       = 8
 gap           = 4
 ```
 
+### Floating / ricing options
+
+```toml
+[global]
+margin     = 8    # horizontal gap from screen edges (requires restart)
+margin_top = 6    # vertical gap from screen edge (requires restart)
+
+[theme]
+widget_bg    = "#313244"       # widget pill background (empty = transparent)
+border_color = "#cba6f7"       # bar border color (empty = no border)
+border_width = 1               # bar border width in pixels
+network_show = "speed,signal"  # comma list: "speed", "name", "signal"
+```
+
 See [CONFIGURATION.md](docs/CONFIGURATION.md) for the full reference.
 
 ---
@@ -149,9 +176,9 @@ bar/
 │   ├── theme/            — Color, Theme, BarStyle
 │   ├── system/           — CPU/RAM/disk/network/battery async monitor
 │   ├── hyprland-ipc/     — IPC client, event parser, WorkspaceInfo
-│   ├── widgets/          — all 7 built-in widgets
+│   ├── widgets/          — 19 built-in widgets (workspaces → notifications)
 │   ├── renderer/         — layout engine (Phase 2)
-│   ├── wayland/          — iced-layershell app loop
+│   ├── wayland/          — iced-layershell app loop, notification D-Bus daemon
 │   └── editor/           — bar-editor GUI (iced desktop window)
 └── docs/
     ├── ARCHITECTURE.md
@@ -169,11 +196,11 @@ bar-editor
 
 The editor opens as a regular desktop window with three tabs:
 
-- **Global** — bar height, top/bottom position, opacity, exclusive zone toggle
-- **Layout** — drag widgets between Left / Center / Right columns with ↑ ↓ × buttons and an Add picker
-- **Theme** — hex color swatches for background / foreground / accent, font, and size/radius/spacing sliders
+- **Global** — bar height, top/bottom position, opacity, exclusive zone, horizontal and vertical margin (floating mode; ⟲ requires restart to apply)
+- **Layout** — add/remove/reorder widgets in Left, Center, Right columns; 19 widget types available
+- **Theme** — full color picker (background, text, accent, widget background, border); font family & size; border radius, padding, gap, widget padding; workspace display style (numbers vs dots); network display options (speed / name / signal); clock & date format; 14 built-in color presets + pywal import
 
-Pressing **Save Changes** writes `~/.config/bar/bar.toml`; the running bar reloads automatically.
+Theme changes apply **live** via inotify — the bar reloads instantly without restarting. Geometry changes (height, position, margins) prompt a save-and-restart from within the editor.
 
 ---
 
@@ -184,7 +211,7 @@ Pressing **Save Changes** writes `~/.config/bar/bar.toml`; the running bar reloa
 RUST_LOG=debug cargo run
 
 # Run the editor
-cargo run --bin bar-editor
+cargo run -p bar-editor
 
 # Run all tests
 cargo test --workspace

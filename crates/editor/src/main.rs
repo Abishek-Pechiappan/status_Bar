@@ -21,7 +21,7 @@ fn main() -> iced::Result {
     iced::application(Editor::new, Editor::update, Editor::view)
         .title("Bar Editor")
         .subscription(Editor::subscription)
-        .window_size(Size::new(740.0, 640.0))
+        .window_size(Size::new(860.0, 700.0))
         .run()
 }
 
@@ -34,6 +34,7 @@ enum ColorField {
     Accent,
     WidgetBg,
     BorderColor,
+    WidgetBorderColor,
 }
 
 // ── Theme presets ─────────────────────────────────────────────────────────────
@@ -138,8 +139,9 @@ struct Editor {
     accent_buf:          String,
     font_buf:            String,
     widget_bg_buf:       String,
-    border_color_buf:    String,
-    clock_format_buf:    String,
+    border_color_buf:          String,
+    widget_border_color_buf:   String,
+    clock_format_buf:          String,
     date_format_buf:     String,
     // Colour picker state
     active_picker: Option<ColorField>,
@@ -198,6 +200,8 @@ enum Message {
     NetworkShowSpeed(bool),
     NetworkShowName(bool),
     NetworkShowSignal(bool),
+    WidgetBorderColorChanged(String),
+    WidgetBorderWidthChanged(f32),
     // Colour picker
     TogglePicker(ColorField),
     ColorGridPicked(f32, f32, f32),  // h, s, v from the grid cell
@@ -224,8 +228,9 @@ impl Editor {
         let accent_buf          = config.theme.accent.clone();
         let font_buf            = config.theme.font.clone();
         let widget_bg_buf       = config.theme.widget_bg.clone();
-        let border_color_buf    = config.theme.border_color.clone();
-        let clock_format_buf    = config.theme.clock_format.clone();
+        let border_color_buf          = config.theme.border_color.clone();
+        let widget_border_color_buf   = config.theme.widget_border_color.clone();
+        let clock_format_buf          = config.theme.clock_format.clone();
         let date_format_buf     = config.theme.date_format.clone();
         let launched_height     = config.global.height;
         let launched_position   = config.global.position;
@@ -249,6 +254,7 @@ impl Editor {
                 font_buf,
                 widget_bg_buf,
                 border_color_buf,
+                widget_border_color_buf,
                 clock_format_buf,
                 date_format_buf,
                 active_picker:    None,
@@ -302,8 +308,9 @@ impl Editor {
         self.accent_buf       = self.config.theme.accent.clone();
         self.font_buf         = self.config.theme.font.clone();
         self.widget_bg_buf    = self.config.theme.widget_bg.clone();
-        self.border_color_buf = self.config.theme.border_color.clone();
-        self.clock_format_buf = self.config.theme.clock_format.clone();
+        self.border_color_buf        = self.config.theme.border_color.clone();
+        self.widget_border_color_buf = self.config.theme.widget_border_color.clone();
+        self.clock_format_buf        = self.config.theme.clock_format.clone();
         self.date_format_buf  = self.config.theme.date_format.clone();
         self.active_picker = None; // close picker when presets/reset are applied
         self.picker_sat    = 1.0;
@@ -342,6 +349,10 @@ impl Editor {
             Some(ColorField::BorderColor) => {
                 self.border_color_buf = hex.clone();
                 self.config.theme.border_color = hex;
+            }
+            Some(ColorField::WidgetBorderColor) => {
+                self.widget_border_color_buf = hex.clone();
+                self.config.theme.widget_border_color = hex;
             }
             None => {}
         }
@@ -423,7 +434,7 @@ impl Editor {
             // ── Theme ────────────────────────────────────────────────────────
             Message::BgChanged(s) => {
                 self.bg_buf = s.clone();
-                if is_valid_hex(&s) { self.config.theme.background = s; }
+                if s.is_empty() || is_valid_hex(&s) { self.config.theme.background = s; }
             }
             Message::FgChanged(s) => {
                 self.fg_buf = s.clone();
@@ -453,6 +464,13 @@ impl Editor {
                 }
             }
             Message::BorderWidthChanged(v) => self.config.theme.border_width = v as u32,
+            Message::WidgetBorderColorChanged(s) => {
+                self.widget_border_color_buf = s.clone();
+                if s.is_empty() || is_valid_hex(&s) {
+                    self.config.theme.widget_border_color = s;
+                }
+            }
+            Message::WidgetBorderWidthChanged(v) => self.config.theme.widget_border_width = v as u32,
 
             Message::ClockFormatChanged(s) => {
                 self.clock_format_buf = s.clone();
@@ -484,11 +502,12 @@ impl Editor {
                 } else {
                     // Restore alpha from the current value if it's an 8-char hex.
                     let hex = match field {
-                        ColorField::Background  => &self.config.theme.background,
-                        ColorField::Foreground  => &self.config.theme.foreground,
-                        ColorField::Accent      => &self.config.theme.accent,
-                        ColorField::WidgetBg    => &self.config.theme.widget_bg,
-                        ColorField::BorderColor => &self.config.theme.border_color,
+                        ColorField::Background        => &self.config.theme.background,
+                        ColorField::Foreground        => &self.config.theme.foreground,
+                        ColorField::Accent            => &self.config.theme.accent,
+                        ColorField::WidgetBg          => &self.config.theme.widget_bg,
+                        ColorField::BorderColor       => &self.config.theme.border_color,
+                        ColorField::WidgetBorderColor => &self.config.theme.widget_border_color,
                     };
                     let trimmed = hex.trim_start_matches('#');
                     self.picker_alpha = if trimmed.len() == 8 {
@@ -635,6 +654,9 @@ impl Editor {
             button(text("Reset Defaults"))
                 .on_press(Message::ResetDefaults)
                 .style(iced::widget::button::danger),
+            text(format!("  {}", self.config_path.display()))
+                .size(10.0)
+                .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
             status,
         ]
         .spacing(8)
@@ -662,6 +684,7 @@ impl Editor {
         let g = &self.config.global;
 
         column![
+            section_header("⟲  Requires bar restart on save"),
             labeled_row(
                 "Height",
                 row![
@@ -669,7 +692,6 @@ impl Editor {
                         .step(1.0f32)
                         .width(200),
                     text(format!("{} px", g.height)).width(60),
-                    text("⟲ restart").size(11.0).color(Color::from_rgb8(0xf9, 0xe2, 0xaf)),
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center),
@@ -679,11 +701,35 @@ impl Editor {
                 row![
                     pos_btn("Top",    Position::Top,    g.position),
                     pos_btn("Bottom", Position::Bottom, g.position),
-                    text("⟲ restart").size(11.0).color(Color::from_rgb8(0xf9, 0xe2, 0xaf)),
                 ]
                 .spacing(4)
                 .align_y(Alignment::Center),
             ),
+            labeled_row(
+                "H. Margin",
+                row![
+                    slider(0.0f32..=100.0, g.margin as f32, Message::MarginChanged)
+                        .step(1.0f32)
+                        .width(200),
+                    text(format!("{} px", g.margin)).width(60),
+                    text("floating bar").size(11.0).color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            ),
+            labeled_row(
+                "V. Margin",
+                row![
+                    slider(0.0f32..=40.0, g.margin_top as f32, Message::MarginTopChanged)
+                        .step(1.0f32)
+                        .width(200),
+                    text(format!("{} px", g.margin_top)).width(60),
+                    text("floating bar").size(11.0).color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            ),
+            section_header("Live — applies immediately"),
             labeled_row(
                 "Opacity",
                 row![
@@ -700,30 +746,6 @@ impl Editor {
                 checkbox(g.exclusive_zone)
                     .label("Reserve space so windows don't overlap the bar")
                     .on_toggle(Message::ExclusiveZoneToggled),
-            ),
-            labeled_row(
-                "H. Margin",
-                row![
-                    slider(0.0f32..=100.0, g.margin as f32, Message::MarginChanged)
-                        .step(1.0f32)
-                        .width(200),
-                    text(format!("{} px", g.margin)).width(60),
-                    text("⟲ restart").size(11.0).color(Color::from_rgb8(0xf9, 0xe2, 0xaf)),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
-            ),
-            labeled_row(
-                "V. Margin",
-                row![
-                    slider(0.0f32..=40.0, g.margin_top as f32, Message::MarginTopChanged)
-                        .step(1.0f32)
-                        .width(200),
-                    text(format!("{} px", g.margin_top)).width(60),
-                    text("⟲ restart").size(11.0).color(Color::from_rgb8(0xf9, 0xe2, 0xaf)),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
             ),
         ]
         .spacing(20)
@@ -885,25 +907,10 @@ impl Editor {
             .collect();
 
         column![
-            // ── Theme presets ─────────────────────────────────────────────────
+            // ── Widget Behaviour ──────────────────────────────────────────────
+            section_header("Widget Behaviour"),
             labeled_row(
-                "Presets",
-                column![
-                    iced::widget::Row::from_vec(preset_btns).spacing(4).wrap(),
-                    row![
-                        button(text("⬇ Import pywal").size(12.0))
-                            .on_press(Message::ImportWal),
-                        text("Imports ~/.cache/wal/colors.json").size(11.0)
-                            .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
-                    ]
-                    .spacing(8)
-                    .align_y(Alignment::Center),
-                ]
-                .spacing(6),
-            ),
-            // ── Workspace display ────────────────────────────────────────────
-            labeled_row(
-                "WS Style",
+                "Workspace Style",
                 row![
                     ws_style_btn("Numbers", false),
                     ws_style_btn("Dots", true),
@@ -911,70 +918,74 @@ impl Editor {
                 .spacing(4),
             ),
             labeled_row(
-                "WS Visible",
+                "Workspace Visible",
                 row![
                     ws_show_btn("All", true),
                     ws_show_btn("Active Only", false),
                 ]
                 .spacing(4),
             ),
-            // ── Network display ───────────────────────────────────────────────
             labeled_row(
-                "Network Show",
+                "Network Display",
                 row![
                     net_btn("Speed",  net_speed,  Message::NetworkShowSpeed(!net_speed)),
                     net_btn("Name",   net_name,   Message::NetworkShowName(!net_name)),
                     net_btn("Signal", net_signal, Message::NetworkShowSignal(!net_signal)),
-                ]
-                .spacing(4),
-            ),
-            // ── Icon style ───────────────────────────────────────────────────
-            labeled_row(
-                "Icons",
-                row![
-                    icon_btn("Nerd Font", true),
-                    icon_btn("ASCII", false),
-                    text("Use ASCII if icons show as \"?\"").size(11.0)
+                    text("select any combination").size(11.0)
                         .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
                 ]
                 .spacing(4)
                 .align_y(Alignment::Center),
             ),
-            // ── Widget pill padding ──────────────────────────────────────────
             labeled_row(
-                "Pill Pad X",
+                "Icon Style",
                 row![
-                    slider(0.0f32..=32.0, t.widget_padding_x as f32, Message::WidgetPadXChanged)
-                        .step(1.0f32)
-                        .width(200),
-                    text(format!("{} px", t.widget_padding_x)).width(60),
+                    icon_btn("Nerd Font", true),
+                    icon_btn("ASCII", false),
+                    text("use ASCII if icons show as \"?\"").size(11.0)
+                        .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+                ]
+                .spacing(4)
+                .align_y(Alignment::Center),
+            ),
+            labeled_row(
+                "Clock Format",
+                row![
+                    text_input("%H:%M", &self.clock_format_buf)
+                        .on_input(Message::ClockFormatChanged)
+                        .width(150),
+                    text("strftime format").size(11.0).color(Color::from_rgb8(0x6c, 0x70, 0x86)),
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center),
             ),
             labeled_row(
-                "Pill Pad Y",
+                "Date Format",
                 row![
-                    slider(0.0f32..=20.0, t.widget_padding_y as f32, Message::WidgetPadYChanged)
-                        .step(1.0f32)
-                        .width(200),
-                    text(format!("{} px", t.widget_padding_y)).width(60),
+                    text_input("%a %d %b", &self.date_format_buf)
+                        .on_input(Message::DateFormatChanged)
+                        .width(150),
+                    text("strftime format").size(11.0).color(Color::from_rgb8(0x6c, 0x70, 0x86)),
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center),
             ),
             // ── Colors ────────────────────────────────────────────────────────
-            color_input("Background",  &self.bg_buf,        &t.background,   Message::BgChanged,
+            section_header("Colors"),
+            color_input_optional("Background",        &self.bg_buf,           &t.background,   Message::BgChanged,
                 ColorField::Background, picker_for(ColorField::Background)),
-            color_input("Text Color",  &self.fg_buf,        &t.foreground,   Message::FgChanged,
+            color_input("Text Color",         &self.fg_buf,           &t.foreground,   Message::FgChanged,
                 ColorField::Foreground, picker_for(ColorField::Foreground)),
-            color_input("Accent",      &self.accent_buf,    &t.accent,       Message::AccentChanged,
+            color_input("Accent",             &self.accent_buf,       &t.accent,       Message::AccentChanged,
                 ColorField::Accent, picker_for(ColorField::Accent)),
-            color_input_optional("Widget BG",    &self.widget_bg_buf,    &t.widget_bg,    Message::WidgetBgChanged,
+            color_input_optional("Widget Background", &self.widget_bg_buf,    &t.widget_bg,    Message::WidgetBgChanged,
                 ColorField::WidgetBg, picker_for(ColorField::WidgetBg)),
-            color_input_optional("Border Color", &self.border_color_buf, &t.border_color, Message::BorderColorChanged,
+            color_input_optional("Border Color",      &self.border_color_buf, &t.border_color, Message::BorderColorChanged,
                 ColorField::BorderColor, picker_for(ColorField::BorderColor)),
-            // ── Border width ─────────────────────────────────────────────────
+            color_input_optional("Widget Border",     &self.widget_border_color_buf, &t.widget_border_color, Message::WidgetBorderColorChanged,
+                ColorField::WidgetBorderColor, picker_for(ColorField::WidgetBorderColor)),
+            // ── Shape & Spacing ───────────────────────────────────────────────
+            section_header("Shape & Spacing"),
             labeled_row(
                 "Border Width",
                 row![
@@ -982,29 +993,23 @@ impl Editor {
                         .step(1.0f32)
                         .width(200),
                     text(format!("{} px", t.border_width)).width(60),
+                    text("bar outer border").size(11.0).color(Color::from_rgb8(0x6c, 0x70, 0x86)),
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center),
             ),
-            // ── Font ──────────────────────────────────────────────────────────
             labeled_row(
-                "Font Family",
-                text_input("Font name", &self.font_buf)
-                    .on_input(Message::FontChanged)
-                    .width(200),
-            ),
-            labeled_row(
-                "Font Size",
+                "Widget Border Width",
                 row![
-                    slider(8.0f32..=32.0, t.font_size, Message::FontSizeChanged)
-                        .step(0.5f32)
+                    slider(0.0f32..=8.0, t.widget_border_width as f32, Message::WidgetBorderWidthChanged)
+                        .step(1.0f32)
                         .width(200),
-                    text(format!("{:.1} pt", t.font_size)).width(60),
+                    text(format!("{} px", t.widget_border_width)).width(60),
+                    text("per-widget pill border").size(11.0).color(Color::from_rgb8(0x6c, 0x70, 0x86)),
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center),
             ),
-            // ── Spacing ──────────────────────────────────────────────────────
             labeled_row(
                 "Border Radius",
                 row![
@@ -1038,28 +1043,63 @@ impl Editor {
                 .spacing(8)
                 .align_y(Alignment::Center),
             ),
-            // ── Clock formats ─────────────────────────────────────────────────
             labeled_row(
-                "Clock Format",
+                "Widget Pad X",
                 row![
-                    text_input("%H:%M", &self.clock_format_buf)
-                        .on_input(Message::ClockFormatChanged)
-                        .width(150),
-                    text("strftime").size(11.0).color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+                    slider(0.0f32..=32.0, t.widget_padding_x as f32, Message::WidgetPadXChanged)
+                        .step(1.0f32)
+                        .width(200),
+                    text(format!("{} px", t.widget_padding_x)).width(60),
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center),
             ),
             labeled_row(
-                "Date Format",
+                "Widget Pad Y",
                 row![
-                    text_input("%a %d %b", &self.date_format_buf)
-                        .on_input(Message::DateFormatChanged)
-                        .width(150),
-                    text("strftime").size(11.0).color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+                    slider(0.0f32..=20.0, t.widget_padding_y as f32, Message::WidgetPadYChanged)
+                        .step(1.0f32)
+                        .width(200),
+                    text(format!("{} px", t.widget_padding_y)).width(60),
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center),
+            ),
+            // ── Font ──────────────────────────────────────────────────────────
+            section_header("Font"),
+            labeled_row(
+                "Font Family",
+                text_input("Font name", &self.font_buf)
+                    .on_input(Message::FontChanged)
+                    .width(200),
+            ),
+            labeled_row(
+                "Font Size",
+                row![
+                    slider(8.0f32..=32.0, t.font_size, Message::FontSizeChanged)
+                        .step(0.5f32)
+                        .width(200),
+                    text(format!("{:.1} pt", t.font_size)).width(60),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            ),
+            // ── Theme Presets ─────────────────────────────────────────────────
+            section_header("Theme Presets"),
+            labeled_row(
+                "Presets",
+                column![
+                    iced::widget::Row::from_vec(preset_btns).spacing(4).wrap(),
+                    row![
+                        button(text("⬇ Import pywal").size(12.0))
+                            .on_press(Message::ImportWal),
+                        text("Imports ~/.cache/wal/colors.json").size(11.0)
+                            .color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                ]
+                .spacing(6),
             ),
         ]
         .spacing(20)
@@ -1074,11 +1114,20 @@ fn labeled_row<'a>(
     content: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     row![
-        text(label).width(140),
+        text(label).width(160),
         content.into(),
     ]
     .spacing(8)
     .align_y(Alignment::Center)
+    .into()
+}
+
+fn section_header(title: &'static str) -> Element<'static, Message> {
+    column![
+        rule::horizontal(1.0f32),
+        text(title).size(11.0).color(Color::from_rgb8(0x6c, 0x70, 0x86)),
+    ]
+    .spacing(4)
     .into()
 }
 

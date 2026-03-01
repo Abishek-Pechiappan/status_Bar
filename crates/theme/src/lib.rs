@@ -20,8 +20,14 @@ pub struct Theme {
     pub border_radius: f32,
     pub padding:       u16,
     pub gap:           u16,
+    /// Bar background.  `None` = fully transparent (wallpaper shows through).
+    pub bar_bg:        Option<Color>,
     /// Widget container background.  `None` = transparent (no per-widget bg).
     pub widget_bg:     Option<Color>,
+    /// Widget container border color.
+    pub widget_border_color: Color,
+    /// Widget container border width in logical pixels (0 = no border).
+    pub widget_border_width: u32,
     /// Bar border color (used when `border_width > 0`).
     pub border_color:  Color,
     /// Bar border width in logical pixels.
@@ -59,11 +65,19 @@ impl Theme {
             border_radius: cfg.border_radius,
             padding:       cfg.padding,
             gap:           cfg.gap,
+            bar_bg: if cfg.background.is_empty() {
+                None
+            } else {
+                Color::from_hex(&cfg.background)
+            },
             widget_bg: if cfg.widget_bg.is_empty() {
                 None
             } else {
                 Color::from_hex(&cfg.widget_bg)
             },
+            widget_border_color: Color::from_hex(&cfg.widget_border_color)
+                .unwrap_or(Color::DARK),
+            widget_border_width: cfg.widget_border_width,
             border_color: Color::from_hex(&cfg.border_color).unwrap_or(Color::DARK),
             border_width: cfg.border_width,
             clock_format:   cfg.clock_format.clone(),

@@ -400,18 +400,20 @@ impl Bar {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let gap    = self.theme.gap as f32;
-        let pad    = self.theme.padding;
-        let radius = self.theme.border_radius;
-        let wbg    = self.theme.widget_bg;
-        let pad_x  = self.theme.widget_pad_x;
-        let pad_y  = self.theme.widget_pad_y;
+        let gap          = self.theme.gap as f32;
+        let pad          = self.theme.padding;
+        let radius       = self.theme.border_radius;
+        let wbg          = self.theme.widget_bg;
+        let pad_x        = self.theme.widget_pad_x;
+        let pad_y        = self.theme.widget_pad_y;
+        let wborder_w    = self.theme.widget_border_width;
+        let wborder_c    = self.theme.widget_border_color;
 
         let left_items: Vec<Element<'_, Message>> = self.config.left
             .iter()
             .filter_map(|w| {
                 self.render_widget(&w.kind)
-                    .map(|e| pill_wrap(e.map(Message::App), radius, wbg, pad_x, pad_y))
+                    .map(|e| pill_wrap(e.map(Message::App), radius, wbg, pad_x, pad_y, wborder_w, wborder_c))
             })
             .collect();
         let left = iced::widget::Row::from_vec(left_items)
@@ -422,7 +424,7 @@ impl Bar {
             .iter()
             .filter_map(|w| {
                 self.render_widget(&w.kind)
-                    .map(|e| pill_wrap(e.map(Message::App), radius, wbg, pad_x, pad_y))
+                    .map(|e| pill_wrap(e.map(Message::App), radius, wbg, pad_x, pad_y, wborder_w, wborder_c))
             })
             .collect();
         let center = iced::widget::Row::from_vec(center_items)
@@ -433,7 +435,7 @@ impl Bar {
             .iter()
             .filter_map(|w| {
                 self.render_widget(&w.kind)
-                    .map(|e| pill_wrap(e.map(Message::App), radius, wbg, pad_x, pad_y))
+                    .map(|e| pill_wrap(e.map(Message::App), radius, wbg, pad_x, pad_y, wborder_w, wborder_c))
             })
             .collect();
         let right = iced::widget::Row::from_vec(right_items)
@@ -468,13 +470,17 @@ impl Bar {
         // Apply the background color (with opacity) at the container level, not the
         // surface level.  This lets Wayland/Hyprland composite the wallpaper correctly
         // through the transparent parts of the surface.
-        let bar_bg = self.theme.background.with_alpha(self.config.global.opacity).to_iced();
+        // When bar_bg is None (background left empty in config) the bar is fully
+        // transparent — the wallpaper/blur shows through.
+        let opacity = self.config.global.opacity;
+        let bar_bg_iced = self.theme.bar_bg
+            .map(|c| iced::Background::Color(c.with_alpha(opacity).to_iced()));
 
         let bar_outer: Element<'_, Message> = container(bar)
             .width(Length::Fill)
             .height(Length::Fixed(bar_h))
             .style(move |_: &iced::Theme| iced::widget::container::Style {
-                background: Some(iced::Background::Color(bar_bg)),
+                background: bar_bg_iced,
                 border: iced::Border {
                     color: border_color,
                     width: border_width,
@@ -906,12 +912,19 @@ fn pill_wrap<'a>(
     bg: Option<ThemeColor>,
     pad_x: u16,
     pad_y: u16,
+    border_width: u32,
+    border_color: ThemeColor,
 ) -> Element<'a, Message> {
+    let border_color_iced = border_color.to_iced();
     container(elem)
         .padding([pad_y as f32, pad_x as f32])
         .style(move |_: &iced::Theme| iced::widget::container::Style {
             background: bg.map(|c| iced::Background::Color(c.to_iced())),
-            border: iced::Border { radius: radius.into(), ..Default::default() },
+            border: iced::Border {
+                radius: radius.into(),
+                color:  border_color_iced,
+                width:  border_width as f32,
+            },
             ..Default::default()
         })
         .into()
