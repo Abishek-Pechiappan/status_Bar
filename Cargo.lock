@@ -299,6 +299,7 @@ version = "0.1.0"
 dependencies = [
  "bar-config",
  "iced",
+ "serde_json",
  "toml",
  "tracing",
  "tracing-subscriber",
