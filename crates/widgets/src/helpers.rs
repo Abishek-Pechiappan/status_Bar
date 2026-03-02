@@ -10,7 +10,7 @@ use std::collections::VecDeque;
 /// `total_w` is the total track width in logical pixels.
 pub(crate) fn mini_bar<'a>(frac: f32, total_w: f32, theme: &Theme) -> Element<'a, Message> {
     let fill_w  = (frac.clamp(0.0, 1.0) * total_w).max(0.0);
-    let track_h = 4.0_f32;
+    let track_h = (theme.font_size * 0.28).max(3.0);
     let accent   = theme.accent.to_iced();
     let track_bg = theme.foreground.with_alpha(0.12).to_iced();
 
@@ -54,7 +54,7 @@ pub(crate) fn usage_color(frac: f32, theme: &Theme) -> iced::Color {
 /// Bottom-anchored sparkline bars built from a rolling history of CPU %.
 /// Each sample renders as a 3 px wide bar whose height is proportional to the value.
 pub(crate) fn mini_sparkline<'a>(history: &VecDeque<f32>, theme: &Theme) -> Element<'a, Message> {
-    let max_h: f32 = 14.0;
+    let max_h: f32 = theme.font_size;
     let bar_w: f32 = 3.0;
     let accent = theme.accent.to_iced();
 

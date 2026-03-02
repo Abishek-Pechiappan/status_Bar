@@ -24,7 +24,7 @@ impl TempWidget {
         let temp = state.system.cpu_temp?;
         let icon = if theme.use_nerd_icons { "" } else { "TMP" };
         Some(
-            row![text(format!("{icon} {temp:.0}°C")).size(theme.font_size)]
+            row![text(format!("{icon} {temp:.0}°C")).size(theme.font_size).color(theme.foreground.to_iced())]
                 .align_y(Alignment::Center)
                 .into(),
         )

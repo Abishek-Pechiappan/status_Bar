@@ -29,7 +29,7 @@ impl ClockWidget {
         let fg = theme.foreground.to_iced();
 
         row![
-            text(date_str).size(theme.font_size - 1.0).color(fg),
+            text(date_str).size(theme.font_size).color(fg),
             text("  "),
             text(time_str).size(theme.font_size).color(fg),
         ]
