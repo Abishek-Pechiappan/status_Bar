@@ -19,6 +19,15 @@ use iced_layershell::{
 };
 
 fn main() -> iced_layershell::Result {
+    let config = load_config(default_path()).unwrap_or_default();
+    let font_name: &'static str = Box::leak(config.theme.font.clone().into_boxed_str());
+    let default_font = iced::Font {
+        family: iced::font::Family::Name(font_name),
+        weight: iced::font::Weight::Normal,
+        stretch: iced::font::Stretch::Normal,
+        style:  iced::font::Style::Normal,
+    };
+
     application(
         PowerMenu::new,
         PowerMenu::namespace,
@@ -28,6 +37,7 @@ fn main() -> iced_layershell::Result {
     .subscription(PowerMenu::subscription)
     .style(PowerMenu::style)
     .settings(Settings {
+        default_font,
         layer_settings: LayerShellSettings {
             // Anchor to all 4 edges → fills the entire screen.
             anchor: Anchor::Top | Anchor::Bottom | Anchor::Left | Anchor::Right,
@@ -67,14 +77,16 @@ enum PowerAction {
 // ── State ─────────────────────────────────────────────────────────────────────
 
 struct PowerMenu {
-    theme: Theme,
+    theme:        Theme,
+    lock_command: String,
 }
 
 impl PowerMenu {
     fn new() -> (Self, Task<Message>) {
         let config = load_config(default_path()).unwrap_or_default();
         let theme  = Theme::from_config(&config.theme);
-        (Self { theme }, Task::none())
+        let lock_command = config.global.lock_command.clone();
+        (Self { theme, lock_command }, Task::none())
     }
 
     fn namespace() -> String {
@@ -84,13 +96,21 @@ impl PowerMenu {
     fn update(&mut self, msg: Message) -> Task<Message> {
         match msg {
             Message::Act(action) => {
-                let cmd: &[&str] = match action {
-                    PowerAction::Lock     => &["loginctl", "lock-session"],
-                    PowerAction::Sleep    => &["systemctl", "suspend"],
-                    PowerAction::Reboot   => &["systemctl", "reboot"],
-                    PowerAction::Shutdown => &["systemctl", "poweroff"],
-                };
-                let _ = std::process::Command::new(cmd[0]).args(&cmd[1..]).spawn();
+                match action {
+                    PowerAction::Lock => {
+                        // Split the configured lock command by whitespace so
+                        // e.g. "hyprlock --immediate" works correctly.
+                        let mut parts = self.lock_command.split_whitespace();
+                        if let Some(program) = parts.next() {
+                            let _ = std::process::Command::new(program)
+                                .args(parts.collect::<Vec<_>>())
+                                .spawn();
+                        }
+                    }
+                    PowerAction::Sleep    => { let _ = std::process::Command::new("systemctl").arg("suspend").spawn(); }
+                    PowerAction::Reboot   => { let _ = std::process::Command::new("systemctl").arg("reboot").spawn(); }
+                    PowerAction::Shutdown => { let _ = std::process::Command::new("systemctl").arg("poweroff").spawn(); }
+                }
                 std::process::exit(0);
             }
             Message::Dismiss => std::process::exit(0),

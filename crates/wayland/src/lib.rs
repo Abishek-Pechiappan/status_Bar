@@ -36,14 +36,16 @@ use std::sync::OnceLock;
 use std::time::Duration;
 use tracing::{error, info, warn};
 
-/// System monitor poll interval (milliseconds).
-const SYSTEM_INTERVAL_MS: u64 = 2_000;
+/// Fallback system monitor poll interval when not set in config (milliseconds).
+const DEFAULT_SYSTEM_INTERVAL_MS: u64 = 2_000;
 
 /// Height of the notification panel that drops below the bar (pixels).
 const NOTIFY_PANEL_HEIGHT: u32 = 300;
 
 /// Custom shell command set once from config at startup.
 static CUSTOM_CMD: OnceLock<String> = OnceLock::new();
+/// System poll interval in ms, set once from config.
+static SYSTEM_INTERVAL_MS: OnceLock<u64> = OnceLock::new();
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -65,11 +67,26 @@ pub fn run() -> iced_layershell::Result {
     };
 
     let _ = CUSTOM_CMD.set(config.global.custom_command.clone());
+    let interval_ms = (config.global.system_poll_secs as u64).max(1) * 1_000;
+    let _ = SYSTEM_INTERVAL_MS.set(interval_ms);
+
+    // Build a default_font from the configured font family so iced
+    // actually uses the right typeface for all text widgets.
+    // Leak the font name into a 'static str so iced::font::Family::Name can hold it.
+    // This is a one-time allocation at startup — acceptable for a status bar.
+    let font_name: &'static str = Box::leak(config.theme.font.clone().into_boxed_str());
+    let default_font = iced::Font {
+        family: iced::font::Family::Name(font_name),
+        weight: iced::font::Weight::Normal,
+        stretch: iced::font::Stretch::Normal,
+        style:  iced::font::Style::Normal,
+    };
 
     application(Bar::new, Bar::namespace, Bar::update, Bar::view)
         .subscription(Bar::subscription)
         .style(Bar::style)
         .settings(Settings {
+            default_font,
             layer_settings: LayerShellSettings {
                 size:           Some((0, height)),
                 exclusive_zone,
@@ -798,8 +815,9 @@ fn ipc_stream() -> impl iced::futures::Stream<Item = Message> {
 
 fn system_stream() -> impl iced::futures::Stream<Item = Message> {
     iced::stream::channel(4, |mut sender: Sender<Message>| async move {
-        let custom_cmd = CUSTOM_CMD.get().cloned().unwrap_or_default();
-        let mut rx = bar_system::spawn_monitor(SYSTEM_INTERVAL_MS, custom_cmd);
+        let custom_cmd   = CUSTOM_CMD.get().cloned().unwrap_or_default();
+        let interval_ms  = *SYSTEM_INTERVAL_MS.get().unwrap_or(&DEFAULT_SYSTEM_INTERVAL_MS);
+        let mut rx = bar_system::spawn_monitor(interval_ms, custom_cmd);
 
         while let Some(snapshot) = rx.recv().await {
             let _ = sender.try_send(Message::App(AppMessage::SystemSnapshot(snapshot)));

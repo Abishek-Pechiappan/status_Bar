@@ -160,6 +160,12 @@ struct Editor {
     picker_alpha: f32,
     /// `true` when a non-structural change is waiting to be auto-saved.
     pending_autosave: bool,
+    /// Detected installed font families from `fc-list`.
+    installed_fonts:     Vec<String>,
+    /// `true` if at least one Nerd-patched font is installed.
+    nerd_font_available: bool,
+    /// Buffered text input for the lock command.
+    lock_command_buf:    String,
 }
 
 // ── Messages ──────────────────────────────────────────────────────────────────
@@ -210,6 +216,12 @@ enum Message {
     WidgetBorderWidthChanged(f32),
     VolumeShowSlider(bool),
     BrightnessShowSlider(bool),
+    ClockShowSeconds(bool),
+    BatteryWarnChanged(f32),
+    LockCommandChanged(String),
+    SystemPollSecsChanged(f32),
+    InstallNerdFonts,
+    FontsDetected { fonts: Vec<String>, nerd_available: bool },
     // Colour picker
     TogglePicker(ColorField),
     ColorGridPicked(f32, f32, f32),  // h, s, v from the grid cell
@@ -244,6 +256,7 @@ impl Editor {
         let launched_position   = config.global.position;
         let launched_margin     = config.global.margin;
         let launched_margin_top = config.global.margin_top;
+        let lock_command_buf    = config.global.lock_command.clone();
 
         (
             Self {
@@ -272,8 +285,11 @@ impl Editor {
                 picker_sat:       1.0,
                 picker_alpha:     1.0,
                 pending_autosave: false,
+                installed_fonts:     Vec::new(),
+                nerd_font_available: false,
+                lock_command_buf,
             },
-            Task::none(),
+            Task::perform(async { detect_installed_fonts() }, |m| m),
         )
     }
 }
@@ -412,6 +428,8 @@ impl Editor {
                 | Message::AutoSaveTick
                 | Message::KeyEvent(_)
                 | Message::TogglePicker(_)
+                | Message::InstallNerdFonts
+                | Message::FontsDetected { .. }
         ) {
             self.pending_autosave = true;
         }
@@ -488,6 +506,20 @@ impl Editor {
             Message::WidgetBorderWidthChanged(v) => self.config.theme.widget_border_width = v as u32,
             Message::VolumeShowSlider(v)     => self.config.theme.volume_show_slider     = v,
             Message::BrightnessShowSlider(v) => self.config.theme.brightness_show_slider = v,
+            Message::ClockShowSeconds(v)     => self.config.theme.clock_show_seconds     = v,
+            Message::BatteryWarnChanged(v)   => self.config.theme.battery_warn_percent   = v as u8,
+            Message::LockCommandChanged(s) => {
+                self.lock_command_buf = s.clone();
+                self.config.global.lock_command = s;
+            }
+            Message::SystemPollSecsChanged(v) => self.config.global.system_poll_secs = v as u32,
+            Message::InstallNerdFonts => {
+                std::thread::spawn(|| install_nerd_font());
+            }
+            Message::FontsDetected { fonts, nerd_available } => {
+                self.installed_fonts     = fonts;
+                self.nerd_font_available = nerd_available;
+            }
 
             Message::ClockFormatPreset(twentyfour) => {
                 let fmt = if twentyfour { "%H:%M".to_string() } else { "%I:%M %p".to_string() };
@@ -760,6 +792,7 @@ impl Editor {
 
     fn view_global(&self) -> Element<'_, Message> {
         let g = &self.config.global;
+        let muted = Color::from_rgb8(0x58, 0x5b, 0x70);
 
         column![
             section_card("Geometry  ·  ⟲ restart required on save",
@@ -816,6 +849,31 @@ impl Editor {
                         checkbox(g.exclusive_zone)
                             .label("Reserve space so windows don't overlap the bar")
                             .on_toggle(Message::ExclusiveZoneToggled),
+                    ),
+                ]
+                .spacing(14),
+            ),
+            section_card("System  ·  live",
+                column![
+                    labeled_row("Poll Interval",
+                        row![
+                            slider(1.0f32..=10.0, g.system_poll_secs as f32, Message::SystemPollSecsChanged)
+                                .step(1.0f32).width(160),
+                            text(format!("{} s", g.system_poll_secs)).width(40),
+                            text("how often CPU, RAM, network stats refresh")
+                                .size(11.0).color(muted),
+                        ]
+                        .spacing(8).align_y(Alignment::Center),
+                    ),
+                    labeled_row("Lock Command",
+                        row![
+                            text_input("loginctl lock-session", &self.lock_command_buf)
+                                .on_input(Message::LockCommandChanged)
+                                .width(260),
+                            text("used by the power menu lock button")
+                                .size(11.0).color(muted),
+                        ]
+                        .spacing(8).align_y(Alignment::Center),
                     ),
                 ]
                 .spacing(14),
@@ -998,6 +1056,11 @@ impl Editor {
         let brt_btn = |label: &'static str, on: bool| -> Element<'static, Message> {
             toggle_chip(label, brt_slider_on == on, Message::BrightnessShowSlider(on))
         };
+        let clk_secs = t.clock_show_seconds;
+        let clk_secs_btn = |label: &'static str, on: bool| -> Element<'static, Message> {
+            toggle_chip(label, clk_secs == on, Message::ClockShowSeconds(on))
+        };
+        let battery_warn = t.battery_warn_percent;
 
         let ps = self.picker_sat;
         let pa = self.picker_alpha;
@@ -1055,6 +1118,18 @@ impl Editor {
                             brt_btn("On", true), brt_btn("Off", false),
                             text("show drag slider in brightness widget").size(11.0).color(muted),
                         ].spacing(4).align_y(Alignment::Center)),
+                    labeled_row("Clock Seconds",
+                        row![
+                            clk_secs_btn("On", true), clk_secs_btn("Off", false),
+                            text("append :SS to clock time display").size(11.0).color(muted),
+                        ].spacing(4).align_y(Alignment::Center)),
+                    labeled_row("Battery Warn %",
+                        row![
+                            slider(5.0f32..=50.0, battery_warn as f32, Message::BatteryWarnChanged)
+                                .step(1.0f32).width(160),
+                            text(format!("{}%", battery_warn)).width(40),
+                            text("low battery icon threshold").size(11.0).color(muted),
+                        ].spacing(8).align_y(Alignment::Center)),
                 ]
                 .spacing(14),
             ),
@@ -1122,11 +1197,43 @@ impl Editor {
                 ]
                 .spacing(14),
             ),
-            section_card("Font",
+            section_card("Font", {
+                let font_picker: Element<'_, Message> = if self.installed_fonts.is_empty() {
+                    text("detecting fonts…").size(11.0).color(muted).into()
+                } else {
+                    pick_list(
+                        self.installed_fonts.as_slice(),
+                        self.installed_fonts.iter()
+                            .find(|f| f.as_str() == self.font_buf.as_str())
+                            .cloned(),
+                        Message::FontChanged,
+                    ).width(200).into()
+                };
+                let nerd_status: Element<'_, Message> = if self.nerd_font_available {
+                    text("✓ Nerd Font detected — icons should display correctly")
+                        .size(11.0)
+                        .color(Color::from_rgb8(0xa6, 0xe3, 0xa1))
+                        .into()
+                } else {
+                    row![
+                        text("⚠ No Nerd Font detected — icons may show as ?")
+                            .size(11.0)
+                            .color(Color::from_rgb8(0xf9, 0xe2, 0xaf)),
+                        button(text("Install JetBrainsMono NF").size(11.0))
+                            .on_press(Message::InstallNerdFonts)
+                            .padding([4, 10]),
+                    ].spacing(8).align_y(Alignment::Center).into()
+                };
                 column![
                     labeled_row("Font Family",
-                        text_input("Font name", &self.font_buf)
-                            .on_input(Message::FontChanged).width(200)),
+                        column![
+                            row![
+                                text_input("Font name", &self.font_buf)
+                                    .on_input(Message::FontChanged).width(220),
+                                font_picker,
+                            ].spacing(8).align_y(Alignment::Center),
+                            nerd_status,
+                        ].spacing(6)),
                     labeled_row("Font Size",
                         row![
                             slider(8.0f32..=32.0, t.font_size, Message::FontSizeChanged)
@@ -1134,8 +1241,8 @@ impl Editor {
                             text(format!("{:.1} pt", t.font_size)).width(50),
                         ].spacing(8).align_y(Alignment::Center)),
                 ]
-                .spacing(14),
-            ),
+                .spacing(14)
+            }),
             section_card("Presets",
                 column![
                     iced::widget::Row::from_vec(preset_btns).spacing(4).wrap(),
@@ -1525,6 +1632,53 @@ fn toggle_network_show(field: &mut String, token: &str, enable: bool) {
         parts.push(token);
     }
     *field = parts.join(",");
+}
+
+/// Run `fc-list` to enumerate all installed font families and detect Nerd Fonts.
+/// Called once at startup via `Task::perform`.
+fn detect_installed_fonts() -> Message {
+    let output = std::process::Command::new("fc-list")
+        .args(["--format", "%{family}\n"])
+        .output();
+
+    let (fonts, nerd_available) = match output {
+        Ok(out) => {
+            let raw = String::from_utf8_lossy(&out.stdout);
+            // fc-list can return comma-separated family lists per entry
+            let mut fonts: Vec<String> = raw
+                .lines()
+                .flat_map(|l| l.split(','))
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            fonts.sort_unstable();
+            fonts.dedup();
+            let nerd = fonts.iter().any(|f| f.to_lowercase().contains("nerd"));
+            (fonts, nerd)
+        }
+        Err(_) => (vec![], false),
+    };
+    Message::FontsDetected { fonts, nerd_available }
+}
+
+/// Download and install JetBrainsMono Nerd Font to `~/.local/share/fonts/`.
+/// Runs silently in the background — started via `std::thread::spawn`.
+fn install_nerd_font() {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let font_dir = format!("{home}/.local/share/fonts/NerdFonts");
+    let _ = std::fs::create_dir_all(&font_dir);
+    let _ = std::process::Command::new("sh")
+        .args([
+            "-c",
+            &format!(
+                "curl -fsSL 'https://github.com/ryanoasis/nerd-fonts/releases/latest/download/JetBrainsMono.tar.xz' -o /tmp/JBMonoNF.tar.xz \
+                 && tar -xf /tmp/JBMonoNF.tar.xz -C '{font_dir}' \
+                 && fc-cache -f \
+                 && rm /tmp/JBMonoNF.tar.xz"
+            ),
+        ])
+        .spawn()
+        .ok();
 }
 
 fn save_config(config: &BarConfig, path: &std::path::Path) -> Result<(), String> {

@@ -16,6 +16,8 @@ pub struct Theme {
     pub background:    Color,
     pub foreground:    Color,
     pub accent:        Color,
+    /// Font family name (e.g. `"JetBrains Mono"`).
+    pub font_name:     String,
     pub font_size:     f32,
     pub border_radius: f32,
     pub padding:       u16,
@@ -56,6 +58,10 @@ pub struct Theme {
     pub volume_show_slider:     bool,
     /// Show an interactive drag slider in the brightness widget.
     pub brightness_show_slider: bool,
+    /// When `true`, the clock widget appends seconds to the time display.
+    pub clock_show_seconds: bool,
+    /// Battery percent at which the battery icon switches to a low-power glyph.
+    pub battery_warn_percent: u8,
 }
 
 impl Theme {
@@ -65,6 +71,7 @@ impl Theme {
             background:    Color::from_hex(&cfg.background).unwrap_or(Color::DARK),
             foreground:    Color::from_hex(&cfg.foreground).unwrap_or(Color::WHITE),
             accent:        Color::from_hex(&cfg.accent).unwrap_or(Color::PURPLE),
+            font_name:     cfg.font.clone(),
             font_size:     cfg.font_size,
             border_radius: cfg.border_radius,
             padding:       cfg.padding,
@@ -96,6 +103,8 @@ impl Theme {
             network_show_signal: cfg.network_show.contains("signal"),
             volume_show_slider:     cfg.volume_show_slider,
             brightness_show_slider: cfg.brightness_show_slider,
+            clock_show_seconds:     cfg.clock_show_seconds,
+            battery_warn_percent:   cfg.battery_warn_percent,
         }
     }
 }

@@ -51,18 +51,26 @@ pub struct GlobalConfig {
     /// Shell command to run every poll cycle, displayed by the `custom` widget.
     /// Empty string disables the custom widget.
     pub custom_command: String,
+    /// Command to run for the Lock action in the power menu.
+    /// Defaults to `loginctl lock-session` (works with hyprlock, swaylock, etc.).
+    pub lock_command: String,
+    /// How often to refresh system stats in seconds (CPU, RAM, network…).
+    /// Lower = snappier widgets but more CPU use.  Default: 2.
+    pub system_poll_secs: u32,
 }
 
 impl Default for GlobalConfig {
     fn default() -> Self {
         Self {
-            height:         40,
-            position:       Position::Top,
-            exclusive_zone: true,
-            opacity:        0.95,
-            margin:         0,
-            margin_top:     0,
-            custom_command: String::new(),
+            height:          40,
+            position:        Position::Top,
+            exclusive_zone:  true,
+            opacity:         0.95,
+            margin:          0,
+            margin_top:      0,
+            custom_command:  String::new(),
+            lock_command:    "loginctl lock-session".to_string(),
+            system_poll_secs: 2,
         }
     }
 }
@@ -164,6 +172,10 @@ pub struct ThemeConfig {
     /// Show an interactive drag slider in the brightness widget.
     /// When `false` (default), only the icon and percentage text are shown.
     pub brightness_show_slider: bool,
+    /// Append seconds (`:SS`) to the time shown by the clock widget.
+    pub clock_show_seconds: bool,
+    /// Battery percentage at which the battery widget shows a low-power glyph.
+    pub battery_warn_percent: u8,
 }
 
 impl Default for ThemeConfig {
@@ -192,6 +204,8 @@ impl Default for ThemeConfig {
             network_show:           "speed".to_string(),
             volume_show_slider:     false,
             brightness_show_slider: false,
+            clock_show_seconds:     false,
+            battery_warn_percent:   20,
         }
     }
 }
