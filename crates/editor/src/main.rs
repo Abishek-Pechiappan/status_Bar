@@ -123,27 +123,6 @@ impl Side {
     }
 }
 
-// ── Waybar import data ────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone)]
-struct WaybarData {
-    left:          Vec<String>,
-    center:        Vec<String>,
-    right:         Vec<String>,
-    height:        Option<u32>,
-    position_top:  Option<bool>,
-    clock_format:  Option<String>,
-    font:          Option<String>,
-    font_size:     Option<f32>,
-    background:    Option<String>,
-    foreground:    Option<String>,
-    accent:        Option<String>,
-    widget_bg:     Option<String>,
-    border_radius: Option<f32>,
-    pad_x:         Option<u16>,
-    pad_y:         Option<u16>,
-}
-
 // ── State ─────────────────────────────────────────────────────────────────────
 
 struct Editor {
@@ -187,10 +166,6 @@ struct Editor {
     nerd_font_available: bool,
     /// Buffered text input for the lock command.
     lock_command_buf:    String,
-    /// Waybar import URL/path input buffer.
-    waybar_url_buf:  String,
-    /// Status message shown after an import attempt.
-    waybar_status:   Option<String>,
 }
 
 // ── Messages ──────────────────────────────────────────────────────────────────
@@ -247,10 +222,6 @@ enum Message {
     SystemPollSecsChanged(f32),
     InstallNerdFonts,
     FontsDetected { fonts: Vec<String>, nerd_available: bool },
-    // Waybar import
-    WaybarUrlChanged(String),
-    WaybarImport,
-    WaybarImported(Result<WaybarData, String>),
     // Colour picker
     TogglePicker(ColorField),
     ColorGridPicked(f32, f32, f32),  // h, s, v from the grid cell
@@ -317,8 +288,6 @@ impl Editor {
                 installed_fonts:     Vec::new(),
                 nerd_font_available: false,
                 lock_command_buf,
-                waybar_url_buf:  String::new(),
-                waybar_status:   None,
             },
             Task::perform(async { detect_installed_fonts() }, |m| m),
         )
@@ -461,9 +430,6 @@ impl Editor {
                 | Message::TogglePicker(_)
                 | Message::InstallNerdFonts
                 | Message::FontsDetected { .. }
-                | Message::WaybarUrlChanged(_)
-                | Message::WaybarImport
-                | Message::WaybarImported(_)
         ) {
             self.pending_autosave = true;
         }
@@ -553,59 +519,6 @@ impl Editor {
             Message::FontsDetected { fonts, nerd_available } => {
                 self.installed_fonts     = fonts;
                 self.nerd_font_available = nerd_available;
-            }
-
-            Message::WaybarUrlChanged(s) => self.waybar_url_buf = s,
-
-            Message::WaybarImport => {
-                let url = self.waybar_url_buf.clone();
-                return Task::perform(
-                    async move { do_waybar_import(&url) },
-                    Message::WaybarImported,
-                );
-            }
-
-            Message::WaybarImported(Ok(data)) => {
-                self.config.left   = data.left.iter().map(|k| WidgetConfig::new(k)).collect();
-                self.config.center = data.center.iter().map(|k| WidgetConfig::new(k)).collect();
-                self.config.right  = data.right.iter().map(|k| WidgetConfig::new(k)).collect();
-                if let Some(h) = data.height      { self.config.global.height = h; }
-                if let Some(t) = data.position_top {
-                    self.config.global.position = if t { Position::Top } else { Position::Bottom };
-                }
-                if let Some(f) = data.clock_format.clone() {
-                    self.clock_format_buf = f.clone(); self.config.theme.clock_format = f;
-                }
-                if let Some(f) = data.font.clone() {
-                    self.font_buf = f.clone(); self.config.theme.font = f;
-                }
-                if let Some(v) = data.font_size    { self.config.theme.font_size = v; }
-                if let Some(c) = data.background.clone() {
-                    self.bg_buf = c.clone(); self.config.theme.background = c;
-                }
-                if let Some(c) = data.foreground.clone() {
-                    self.fg_buf = c.clone(); self.config.theme.foreground = c;
-                }
-                if let Some(c) = data.accent.clone() {
-                    self.accent_buf = c.clone(); self.config.theme.accent = c;
-                }
-                if let Some(c) = data.widget_bg.clone() {
-                    self.widget_bg_buf = c.clone(); self.config.theme.widget_bg = c;
-                }
-                if let Some(r) = data.border_radius { self.config.theme.border_radius = r; }
-                if let Some(x) = data.pad_x         { self.config.theme.widget_padding_x = x; }
-                if let Some(y) = data.pad_y         { self.config.theme.widget_padding_y = y; }
-                let total = self.config.left.len() + self.config.center.len() + self.config.right.len();
-                let css_note = if data.font.is_some() || data.background.is_some() { " + theme" } else { "" };
-                self.waybar_status = Some(format!(
-                    "✓ Imported {total} widgets ({} L · {} C · {} R){css_note}",
-                    self.config.left.len(), self.config.center.len(), self.config.right.len(),
-                ));
-                self.pending_autosave = true;
-            }
-
-            Message::WaybarImported(Err(e)) => {
-                self.waybar_status = Some(format!("✗ {e}"));
             }
 
             Message::ClockFormatPreset(twentyfour) => {
@@ -973,49 +886,14 @@ impl Editor {
     // ── Layout section ────────────────────────────────────────────────────────
 
     fn view_layout(&self) -> Element<'_, Message> {
-        let muted = Color::from_rgb8(0x58, 0x5b, 0x70);
-        let status_el: Element<'_, Message> = match &self.waybar_status {
-            None    => text("").into(),
-            Some(s) => text(s.as_str()).size(11.0).color(
-                if s.starts_with('✓') { Color::from_rgb8(0xa6, 0xe3, 0xa1) }
-                else                   { Color::from_rgb8(0xf3, 0x8b, 0xa8) }
-            ).into(),
-        };
-        column![
-            section_card("Widget Layout",
-                row![
-                    self.widget_column(Side::Left,   "Left"),
-                    self.widget_column(Side::Center, "Center"),
-                    self.widget_column(Side::Right,  "Right"),
-                ]
-                .spacing(16),
-            ),
-            section_card("Import from Waybar",
-                column![
-                    labeled_row("Config path / URL",
-                        row![
-                            text_input(
-                                "~/.config/waybar/config  or  GitHub URL",
-                                &self.waybar_url_buf,
-                            )
-                            .on_input(Message::WaybarUrlChanged)
-                            .width(400),
-                            button(text("Import").size(12.0))
-                                .on_press(Message::WaybarImport)
-                                .padding([5, 16]),
-                        ]
-                        .spacing(8)
-                        .align_y(Alignment::Center),
-                    ),
-                    text("Imports layout + colors/font from style.css (auto-located next to the config)")
-                        .size(10.0).color(muted),
-                    status_el,
-                ]
-                .spacing(6),
-            ),
-        ]
-        .spacing(10)
-        .into()
+        section_card("Widget Layout",
+            row![
+                self.widget_column(Side::Left,   "Left"),
+                self.widget_column(Side::Center, "Center"),
+                self.widget_column(Side::Right,  "Right"),
+            ]
+            .spacing(16),
+        )
     }
 
     fn widget_column(&self, side: Side, title: &'static str) -> Element<'_, Message> {
@@ -1801,378 +1679,6 @@ fn install_nerd_font() {
         ])
         .spawn()
         .ok();
-}
-
-// ── Waybar import helpers ─────────────────────────────────────────────────────
-
-fn do_waybar_import(input: &str) -> Result<WaybarData, String> {
-    let (config_raw, css_hint) = resolve_waybar_input(input)?;
-
-    let config_text  = fetch_or_read_waybar(&config_raw)?;
-    let config_clean = strip_jsonc(&config_text);
-    let v: serde_json::Value = serde_json::from_str(&config_clean)
-        .map_err(|e| format!("JSON parse error: {e}"))?;
-
-    let map_side = |key: &str| -> Vec<String> {
-        v[key].as_array().map(|arr| {
-            arr.iter()
-               .filter_map(|m| m.as_str())
-               .filter_map(|s| map_waybar_module(s))
-               .collect()
-        }).unwrap_or_default()
-    };
-
-    let mut data = WaybarData {
-        left:          map_side("modules-left"),
-        center:        map_side("modules-center"),
-        right:         map_side("modules-right"),
-        height:        v["height"].as_u64().map(|n| n as u32),
-        position_top:  v["position"].as_str().map(|p| p != "bottom"),
-        clock_format:  v["clock"]["format"].as_str().map(String::from),
-        font: None, font_size: None, background: None, foreground: None,
-        accent: None, widget_bg: None, border_radius: None, pad_x: None, pad_y: None,
-    };
-
-    if let Ok(css_text) = fetch_or_read_waybar(&css_hint) {
-        parse_waybar_css(&css_text, &mut data);
-    }
-
-    Ok(data)
-}
-
-fn resolve_waybar_input(input: &str) -> Result<(String, String), String> {
-    let input = input.trim();
-    if input.is_empty() { return Err("No path or URL provided".into()); }
-
-    let is_url = input.starts_with("http://") || input.starts_with("https://")
-                 || input.starts_with("github.com/");
-
-    if is_url {
-        let url = if input.starts_with("github.com/") {
-            format!("https://{input}")
-        } else {
-            input.to_string()
-        };
-        // Convert github.com blob URLs → raw.githubusercontent.com
-        let raw = if url.contains("github.com/") && url.contains("/blob/") {
-            url.replace("github.com/", "raw.githubusercontent.com/")
-               .replace("/blob/", "/")
-        } else {
-            url
-        };
-        // Auto-locate style.css next to the config
-        let css = raw.rsplitn(2, '/').last()
-            .map(|base| format!("{base}/style.css"))
-            .unwrap_or_else(|| raw.clone());
-        Ok((raw, css))
-    } else {
-        let path = if input.starts_with('~') {
-            let home = std::env::var("HOME").unwrap_or_default();
-            input.replacen('~', &home, 1)
-        } else {
-            input.to_string()
-        };
-        let css = std::path::Path::new(&path)
-            .parent()
-            .map(|p| p.join("style.css").to_string_lossy().to_string())
-            .unwrap_or_default();
-        Ok((path, css))
-    }
-}
-
-fn fetch_or_read_waybar(target: &str) -> Result<String, String> {
-    if target.starts_with("http://") || target.starts_with("https://") {
-        let out = std::process::Command::new("curl")
-            .args(["-fsSL", "--max-time", "15", target])
-            .output()
-            .map_err(|e| format!("curl failed: {e}"))?;
-        if !out.status.success() {
-            let msg = String::from_utf8_lossy(&out.stderr);
-            return Err(format!("Download failed: {msg}"));
-        }
-        String::from_utf8(out.stdout).map_err(|e| format!("UTF-8 error: {e}"))
-    } else {
-        std::fs::read_to_string(target)
-            .map_err(|e| format!("Cannot read {target}: {e}"))
-    }
-}
-
-/// Strip `//` line comments and `/* */` block comments from JSONC text.
-fn strip_jsonc(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars().peekable();
-    let mut in_string = false;
-    let mut in_block  = false;
-    while let Some(c) = chars.next() {
-        if in_block {
-            if c == '*' && chars.peek() == Some(&'/') { chars.next(); in_block = false; }
-            continue;
-        }
-        if in_string {
-            out.push(c);
-            if c == '\\' { if let Some(e) = chars.next() { out.push(e); } }
-            else if c == '"' { in_string = false; }
-            continue;
-        }
-        if c == '"' { in_string = true; out.push(c); continue; }
-        if c == '/' {
-            match chars.peek() {
-                Some('/') => {
-                    chars.next();
-                    for x in chars.by_ref() { if x == '\n' { out.push('\n'); break; } }
-                    continue;
-                }
-                Some('*') => { chars.next(); in_block = true; continue; }
-                _ => {}
-            }
-        }
-        out.push(c);
-    }
-    out
-}
-
-/// Map a Waybar module name to a bar widget kind.  Returns `None` for skipped modules.
-fn map_waybar_module(name: &str) -> Option<String> {
-    let kind = match name {
-        n if n.ends_with("/workspaces") || n.ends_with("/tags") => "workspaces",
-        n if n.ends_with("/window") => "title",
-        "clock"                     => "clock",
-        "cpu"                       => "cpu",
-        "memory"                    => "memory",
-        "temperature"               => "temperature",
-        "disk"                      => "disk",
-        "network"                   => "network",
-        "pulseaudio" | "wireplumber" => "volume",
-        "backlight"  | "brightness" => "brightness",
-        "battery"    | "upower"     => "battery",
-        "keyboard-state"            => "keyboard",
-        n if n.ends_with("/language") => "keyboard",
-        "mpris" | "mpd"             => "media",
-        n if n.ends_with("/taskbar") || n == "wlr/taskbar" => "tray",
-        "load"                      => "load",
-        "uptime"                    => "uptime",
-        n if n.starts_with("custom/") => "custom",
-        "tray" => return None,   // system-tray applets — no bar equivalent
-        _      => "separator",
-    };
-    Some(kind.to_string())
-}
-
-/// Extract theme values from Waybar CSS.
-fn parse_waybar_css(css: &str, data: &mut WaybarData) {
-    let clean  = strip_css_block_comments(css);
-    let blocks = extract_css_blocks(&clean);
-
-    for (selector, props) in &blocks {
-        let sel = selector.trim().to_lowercase();
-
-        if sel == "*" {
-            if data.font.is_none() {
-                data.font = css_prop(props, "font-family")
-                    .map(|s| s.trim_matches('"').trim_matches('\'').to_string());
-            }
-            if data.font_size.is_none() {
-                data.font_size = css_prop(props, "font-size")
-                    .and_then(|s| s.trim_end_matches("px").trim().parse::<f32>().ok());
-            }
-        }
-
-        if sel.contains("window#waybar") {
-            if data.font.is_none() {
-                data.font = css_prop(props, "font-family")
-                    .map(|s| s.trim_matches('"').trim_matches('\'').to_string());
-            }
-            if data.font_size.is_none() {
-                data.font_size = css_prop(props, "font-size")
-                    .and_then(|s| s.trim_end_matches("px").trim().parse::<f32>().ok());
-            }
-            if data.background.is_none() {
-                data.background = css_prop(props, "background-color")
-                    .or_else(|| css_prop(props, "background"))
-                    .and_then(|s| normalize_css_color(&s));
-            }
-            if data.foreground.is_none() {
-                data.foreground = css_prop(props, "color")
-                    .and_then(|s| normalize_css_color(&s));
-            }
-            if data.border_radius.is_none() {
-                data.border_radius = css_prop(props, "border-radius")
-                    .and_then(|s| s.trim_end_matches("px").trim().parse::<f32>().ok());
-            }
-        }
-    }
-
-    // Module-level blocks: #clock, #cpu, etc.
-    let mut module_colors: Vec<String> = Vec::new();
-    let mut first_module_done = false;
-
-    for (selector, props) in &blocks {
-        let sel = selector.trim();
-        if sel.starts_with('#') && !sel.to_lowercase().contains("waybar") {
-            if let Some(c) = css_prop(props, "color").and_then(|s| normalize_css_color(&s)) {
-                module_colors.push(c);
-            }
-            if !first_module_done {
-                first_module_done = true;
-                if data.widget_bg.is_none() {
-                    data.widget_bg = css_prop(props, "background-color")
-                        .or_else(|| css_prop(props, "background"))
-                        .and_then(|s| normalize_css_color(&s));
-                }
-                if data.border_radius.is_none() {
-                    data.border_radius = css_prop(props, "border-radius")
-                        .and_then(|s| s.trim_end_matches("px").trim().parse::<f32>().ok());
-                }
-                if data.pad_x.is_none() || data.pad_y.is_none() {
-                    if let Some(pad) = css_prop(props, "padding") {
-                        let (px, py) = parse_css_padding(&pad);
-                        if data.pad_x.is_none() { data.pad_x = Some(px); }
-                        if data.pad_y.is_none() { data.pad_y = Some(py); }
-                    }
-                }
-            }
-        }
-    }
-
-    // Accent = most frequent module color different from foreground
-    if data.accent.is_none() && !module_colors.is_empty() {
-        let fg = data.foreground.as_deref().unwrap_or("");
-        let mut freq: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
-        for c in &module_colors {
-            if c.as_str() != fg { *freq.entry(c.as_str()).or_default() += 1; }
-        }
-        if let Some((color, _)) = freq.into_iter().max_by_key(|(_, n)| *n) {
-            data.accent = Some(color.to_string());
-        }
-    }
-}
-
-fn strip_css_block_comments(css: &str) -> String {
-    let mut out   = String::with_capacity(css.len());
-    let mut chars = css.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '/' && chars.peek() == Some(&'*') {
-            chars.next();
-            while let Some(d) = chars.next() {
-                if d == '*' && chars.peek() == Some(&'/') { chars.next(); break; }
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
-/// Extract (selector, properties) pairs from CSS using a brace scanner.
-fn extract_css_blocks(css: &str) -> Vec<(String, String)> {
-    let mut result = Vec::new();
-    let mut chars  = css.chars().peekable();
-    let mut selector = String::new();
-    let mut props    = String::new();
-    let mut depth    = 0usize;
-
-    while let Some(c) = chars.next() {
-        if c == '{' {
-            depth += 1;
-            if depth == 1 {
-                props.clear();
-            } else {
-                props.push(c);
-            }
-        } else if c == '}' {
-            if depth == 1 {
-                // Handle comma-separated selectors: emit one block per selector
-                for sel in selector.split(',') {
-                    let sel = sel.trim().to_string();
-                    if !sel.is_empty() {
-                        result.push((sel, props.clone()));
-                    }
-                }
-                selector.clear();
-            } else {
-                props.push(c);
-            }
-            if depth > 0 { depth -= 1; }
-        } else if depth == 0 {
-            selector.push(c);
-        } else {
-            props.push(c);
-        }
-    }
-    result
-}
-
-/// Extract a single CSS property value from a properties block string.
-fn css_prop(props: &str, name: &str) -> Option<String> {
-    let needle = format!("{name}:");
-    let start  = props.to_lowercase().find(&needle)? + needle.len();
-    let rest   = &props[start..];
-    let end    = rest.find(';').unwrap_or(rest.len());
-    let value  = rest[..end].trim().to_string();
-    if value.is_empty() { None } else { Some(value) }
-}
-
-/// Normalise a CSS color value to `#rrggbb` / `#rrggbbaa` hex.
-fn normalize_css_color(s: &str) -> Option<String> {
-    let s = s.trim();
-    if s.starts_with('#') {
-        return Some(expand_css_hex(s));
-    }
-    if s.starts_with("rgba(") || s.starts_with("rgb(") {
-        return parse_css_rgba(s);
-    }
-    None
-}
-
-fn expand_css_hex(s: &str) -> String {
-    let h = s.trim_start_matches('#');
-    match h.len() {
-        3 => {
-            let r = &h[0..1];
-            let g = &h[1..2];
-            let b = &h[2..3];
-            format!("#{r}{r}{g}{g}{b}{b}")
-        }
-        4 => {
-            let r = &h[0..1];
-            let g = &h[1..2];
-            let b = &h[2..3];
-            let a = &h[3..4];
-            format!("#{r}{r}{g}{g}{b}{b}{a}{a}")
-        }
-        _ => s.to_string(),
-    }
-}
-
-fn parse_css_rgba(s: &str) -> Option<String> {
-    let inner = s.trim_start_matches("rgba(").trim_start_matches("rgb(").trim_end_matches(')');
-    let parts: Vec<&str> = inner.split(',').collect();
-    if parts.len() < 3 { return None; }
-    let r = parts[0].trim().parse::<f32>().ok()? as u8;
-    let g = parts[1].trim().parse::<f32>().ok()? as u8;
-    let b = parts[2].trim().parse::<f32>().ok()? as u8;
-    if parts.len() >= 4 {
-        let a = (parts[3].trim().parse::<f32>().ok()? * 255.0).round() as u8;
-        Some(format!("#{r:02x}{g:02x}{b:02x}{a:02x}"))
-    } else {
-        Some(format!("#{r:02x}{g:02x}{b:02x}"))
-    }
-}
-
-/// Parse CSS padding shorthand into `(x_px, y_px)`.
-/// CSS padding order: top | top right | top right bottom | top right bottom left
-fn parse_css_padding(pad: &str) -> (u16, u16) {
-    let values: Vec<u16> = pad
-        .split_whitespace()
-        .map(|t| t.trim_end_matches("px").parse::<f32>().unwrap_or(0.0).round() as u16)
-        .collect();
-    match values.as_slice() {
-        [all]              => (*all, *all),
-        [v, h]             => (*h, *v),
-        [top, h, _bottom]  => (*h, *top),
-        [top, right, _, _] => (*right, *top),
-        _                  => (0, 0),
-    }
 }
 
 fn save_config(config: &BarConfig, path: &std::path::Path) -> Result<(), String> {

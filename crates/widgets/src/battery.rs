@@ -1,10 +1,14 @@
+use crate::helpers::mini_bar;
 use bar_core::{event::Message, state::AppState};
 use bar_theme::Theme;
-use iced::{widget::text, Element};
+use iced::{
+    widget::{row, text},
+    Alignment, Element,
+};
 
-/// Displays battery level, charging state, and estimated time remaining.
+/// Displays battery level with a fill bar and state-colored icon/text.
 ///
-/// Uses proper Nerd Font battery icons when enabled, block chars otherwise.
+/// Green when charging, red when at or below the configured warn threshold.
 /// Hidden entirely when no battery is present (desktop / VM).
 #[derive(Debug, Default)]
 pub struct BatteryWidget;
@@ -22,21 +26,34 @@ impl BatteryWidget {
     ) -> Option<Element<'a, Message>> {
         let pct      = state.system.battery_percent?;
         let charging = state.system.battery_charging.unwrap_or(false);
+        let frac     = pct as f32 / 100.0;
+
+        let col = if charging {
+            iced::Color::from_rgb8(0xa6, 0xe3, 0xa1)   // green
+        } else if pct <= theme.battery_warn_percent {
+            iced::Color::from_rgb8(0xf3, 0x8b, 0xa8)   // red
+        } else {
+            theme.foreground.to_iced()
+        };
 
         let icon = battery_icon(pct, charging, theme.use_nerd_icons);
         let time = format_time(state.system.battery_time_min);
 
-        let label = if time.is_empty() {
-            format!("{icon} {pct}%")
+        let time_el: Element<'a, Message> = if time.is_empty() {
+            iced::widget::Space::new().width(0).into()
         } else {
-            format!("{icon} {pct}% {time}")
+            text(format!("  {time}")).size(theme.font_size).color(col).into()
         };
 
         Some(
-            text(label)
-                .size(theme.font_size)
-                .color(theme.foreground.to_iced())
-                .into(),
+            row![
+                text(format!("{icon}  ")).size(theme.font_size).color(col),
+                mini_bar(frac, 36.0, theme),
+                text(format!("  {pct}%")).size(theme.font_size).color(col),
+                time_el,
+            ]
+            .align_y(Alignment::Center)
+            .into(),
         )
     }
 }

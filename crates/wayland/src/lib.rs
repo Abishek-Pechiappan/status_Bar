@@ -137,6 +137,12 @@ struct Bar {
     notify:     NotifyWidget,
     tray:       TrayWidget,
     power:      PowerWidget,
+    // EMA-smoothed system metrics
+    ema_cpu:     f32,
+    ema_net_rx:  f32,
+    ema_net_tx:  f32,
+    // Rolling CPU average history for sparkline (newest at back, max 20)
+    cpu_history: std::collections::VecDeque<f32>,
 }
 
 impl Bar {
@@ -169,6 +175,10 @@ impl Bar {
             notify:     NotifyWidget::new(),
             tray:       TrayWidget::new(),
             power:      PowerWidget::new(),
+            ema_cpu:     0.0,
+            ema_net_rx:  0.0,
+            ema_net_tx:  0.0,
+            cpu_history: std::collections::VecDeque::with_capacity(20),
         };
 
         let init_task = Task::perform(
@@ -227,7 +237,21 @@ impl Bar {
             }
 
             // ── System monitor ────────────────────────────────────────────────
-            AppMessage::SystemSnapshot(snapshot) => {
+            AppMessage::SystemSnapshot(mut snapshot) => {
+                const ALPHA:   f32   = 0.35;
+                const HISTORY: usize = 20;
+
+                self.ema_cpu    = ALPHA * snapshot.cpu_average   + (1.0 - ALPHA) * self.ema_cpu;
+                self.ema_net_rx = ALPHA * snapshot.net_rx as f32 + (1.0 - ALPHA) * self.ema_net_rx;
+                self.ema_net_tx = ALPHA * snapshot.net_tx as f32 + (1.0 - ALPHA) * self.ema_net_tx;
+
+                snapshot.cpu_average = self.ema_cpu;
+                snapshot.net_rx      = self.ema_net_rx as u64;
+                snapshot.net_tx      = self.ema_net_tx as u64;
+
+                if self.cpu_history.len() >= HISTORY { self.cpu_history.pop_front(); }
+                self.cpu_history.push_back(self.ema_cpu);
+
                 self.state.system = snapshot;
             }
 
@@ -445,7 +469,7 @@ impl Bar {
             "workspaces"  => Some(self.workspaces.view(&self.state, &self.theme)),
             "title"       => Some(self.title.view(&self.state, &self.theme)),
             "clock"       => Some(self.clock.view(&self.state, &self.theme)),
-            "cpu"         => Some(self.cpu.view(&self.state, &self.theme)),
+            "cpu"         => Some(self.cpu.view(&self.state, &self.theme, &self.cpu_history)),
             "memory"      => Some(self.memory.view(&self.state, &self.theme)),
             "network"     => Some(self.network.view(&self.state, &self.theme)),
             "uptime"      => Some(self.uptime.view(&self.state, &self.theme)),

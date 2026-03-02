@@ -1,3 +1,4 @@
+pub(crate) mod helpers;
 pub mod battery;
 pub mod brightness;
 pub mod separator;
