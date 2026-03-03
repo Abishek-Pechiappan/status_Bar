@@ -98,6 +98,14 @@ pub enum Message {
     /// Package update count refreshed (`None` = `checkupdates` unavailable).
     UpdateCountRefreshed(Option<u32>),
 
+    // ── Auto-hide ─────────────────────────────────────────────────────────────
+    /// Cursor entered the bar surface — cancel any pending hide timer.
+    BarMouseEnter,
+    /// Cursor left the bar surface — start the hide countdown.
+    BarMouseLeave,
+    /// Internal 200 ms timer tick used to check the auto-hide countdown.
+    AutoHideTick,
+
     // ── Internal ──────────────────────────────────────────────────────────────
     /// One-second timer tick — used to update the clock.
     Tick,

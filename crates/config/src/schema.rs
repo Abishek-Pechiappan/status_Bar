@@ -57,6 +57,12 @@ pub struct GlobalConfig {
     /// How often to refresh system stats in seconds (CPU, RAM, network…).
     /// Lower = snappier widgets but more CPU use.  Default: 2.
     pub system_poll_secs: u32,
+    /// When `true`, the bar collapses to a 1 px strip when the cursor is not
+    /// over it, and slides back to full height when the cursor approaches the edge.
+    /// Automatically sets `exclusive_zone = false` so windows use the full screen.
+    pub auto_hide: bool,
+    /// Milliseconds of cursor-absence before the bar hides.  Default: 1000.
+    pub auto_hide_delay_ms: u32,
 }
 
 impl Default for GlobalConfig {
@@ -71,6 +77,8 @@ impl Default for GlobalConfig {
             custom_command:  String::new(),
             lock_command:    "loginctl lock-session".to_string(),
             system_poll_secs: 2,
+            auto_hide:          false,
+            auto_hide_delay_ms: 1000,
         }
     }
 }

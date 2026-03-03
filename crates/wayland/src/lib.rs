@@ -63,7 +63,10 @@ pub fn run() -> iced_layershell::Result {
         Position::Top    => (margin_edge, 0),
         Position::Bottom => (0, margin_edge),
     };
-    let exclusive_zone = if config.global.exclusive_zone {
+    // Auto-hide bars never reserve compositor space — they collapse to 1 px.
+    let exclusive_zone = if config.global.auto_hide {
+        0
+    } else if config.global.exclusive_zone {
         (height + config.global.margin_top) as i32
     } else {
         0
@@ -155,6 +158,11 @@ struct Bar {
     net_tx_history: std::collections::VecDeque<f32>,
     // Whether the calendar panel is currently open
     calendar_open: bool,
+    // ── Auto-hide ─────────────────────────────────────────────────────────────
+    /// `true` = bar at full height; `false` = collapsed to 1 px strip.
+    bar_visible: bool,
+    /// When the cursor left the bar — used to drive the hide countdown.
+    hide_after: Option<std::time::Instant>,
 }
 
 impl Bar {
@@ -199,6 +207,8 @@ impl Bar {
             net_rx_history: std::collections::VecDeque::with_capacity(20),
             net_tx_history: std::collections::VecDeque::with_capacity(20),
             calendar_open: false,
+            bar_visible:  true,
+            hide_after:   None,
         };
 
         let init_task = Task::perform(
@@ -508,6 +518,46 @@ impl Bar {
                 self.state.update_count = count;
             }
 
+            // ── Auto-hide ─────────────────────────────────────────────────────
+            AppMessage::BarMouseEnter => {
+                if self.config.global.auto_hide {
+                    self.hide_after = None;
+                    if !self.bar_visible {
+                        self.bar_visible = true;
+                        return self.sync_surface_size();
+                    }
+                }
+            }
+            AppMessage::BarMouseLeave => {
+                // Only start the hide countdown when no panel is open (the
+                // mouse_area covers bar + panel, so leaving the panel also
+                // fires this; but we don't want to hide while panel is visible).
+                if self.config.global.auto_hide
+                    && !self.state.notify_panel_open
+                    && !self.calendar_open
+                {
+                    self.hide_after = Some(std::time::Instant::now());
+                }
+            }
+            AppMessage::AutoHideTick => {
+                if self.config.global.auto_hide {
+                    if let Some(t) = self.hide_after {
+                        let delay = Duration::from_millis(
+                            self.config.global.auto_hide_delay_ms as u64,
+                        );
+                        if t.elapsed() >= delay
+                            && self.bar_visible
+                            && !self.state.notify_panel_open
+                            && !self.calendar_open
+                        {
+                            self.bar_visible = false;
+                            self.hide_after = None;
+                            return self.sync_surface_size();
+                        }
+                    }
+                }
+            }
+
             AppMessage::Tick | AppMessage::Shutdown => {}
         }
         Task::none()
@@ -641,7 +691,20 @@ impl Bar {
             })
             .into();
 
-        if self.state.notify_panel_open {
+        // ── Auto-hide: when collapsed show a 1 px invisible strip that
+        //    re-expands the bar when the cursor enters it.
+        if self.config.global.auto_hide && !self.bar_visible {
+            return iced::widget::mouse_area(
+                container(iced::widget::Space::new())
+                    .width(Length::Fill)
+                    .height(Length::Fixed(1.0)),
+            )
+            .on_enter(Message::App(AppMessage::BarMouseEnter))
+            .into();
+        }
+
+        // Build the full visible content (bar + optional drop-down panel).
+        let content: Element<'_, Message> = if self.state.notify_panel_open {
             column![bar_outer, self.view_notify_panel()]
                 .width(Length::Fill)
                 .into()
@@ -651,6 +714,16 @@ impl Bar {
                 .into()
         } else {
             bar_outer
+        };
+
+        // When auto-hide is active, track cursor enter/leave on the whole surface.
+        if self.config.global.auto_hide {
+            iced::widget::mouse_area(content)
+                .on_enter(Message::App(AppMessage::BarMouseEnter))
+                .on_exit(Message::App(AppMessage::BarMouseLeave))
+                .into()
+        } else {
+            content
         }
     }
 
@@ -892,7 +965,7 @@ impl Bar {
     fn subscription(&self) -> Subscription<Message> {
         let tick = iced::time::every(Duration::from_secs(1)).map(|_| Message::Tick);
 
-        Subscription::batch([
+        let mut subs = vec![
             tick,
             Subscription::run(ipc_stream),
             Subscription::run(system_stream),
@@ -900,7 +973,17 @@ impl Bar {
             Subscription::run(notify_stream),
             Subscription::run(clients_stream),
             Subscription::run(updates_stream),
-        ])
+        ];
+
+        // Faster poll for auto-hide countdown (200 ms granularity).
+        if self.config.global.auto_hide {
+            subs.push(
+                iced::time::every(Duration::from_millis(200))
+                    .map(|_| Message::App(AppMessage::AutoHideTick)),
+            );
+        }
+
+        Subscription::batch(subs)
     }
 
     // ── Style ─────────────────────────────────────────────────────────────────
@@ -917,8 +1000,12 @@ impl Bar {
 
     // ── Panel helpers ─────────────────────────────────────────────────────────
 
-    /// Resize the layer-shell surface to match whether a panel is open.
+    /// Resize the layer-shell surface to match current visibility / panel state.
     fn sync_surface_size(&self) -> Task<Message> {
+        // When auto-hidden, collapse to a 1 px interactive strip.
+        if self.config.global.auto_hide && !self.bar_visible {
+            return Task::done(Message::SizeChange((0, 1)));
+        }
         let bar_h   = self.config.global.height;
         let panel_h = if self.state.notify_panel_open {
             NOTIFY_PANEL_HEIGHT
