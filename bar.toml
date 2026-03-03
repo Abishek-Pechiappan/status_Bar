@@ -11,7 +11,7 @@ margin_top     = 0         # vertical gap from screen edge   (floating bar)
 
 # ── Power menu ────────────────────────────────────────────────────────────────
 lock_command    = "loginctl lock-session"   # command run when "Lock" is chosen
-power_menu_style = "dropdown"  # "dropdown" | "inline" | "overlay"
+power_menu_style = "overlay"   # "overlay" (bento grid popup) | "dropdown" | "inline"
 power_anim_style = "slide"     # "slide" | "fade" | "scale" | "none"
 power_actions   = ["lock", "sleep", "hibernate", "logout", "reboot", "shutdown"]
 

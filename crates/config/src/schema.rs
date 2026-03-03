@@ -91,7 +91,7 @@ impl Default for GlobalConfig {
             system_poll_secs: 2,
             auto_hide:          false,
             auto_hide_delay_ms: 1000,
-            power_menu_style:   "dropdown".to_string(),
+            power_menu_style:   "overlay".to_string(),
             power_anim_style:   "slide".to_string(),
             power_actions:      default_power_actions(),
         }
