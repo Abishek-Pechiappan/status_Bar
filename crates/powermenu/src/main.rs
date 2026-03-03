@@ -113,12 +113,11 @@ impl PowerMenu {
     // ── View ──────────────────────────────────────────────────────────────────
 
     fn view(&self) -> Element<'_, Message> {
-        let now      = Instant::now();
-        let t        = &self.theme;
-        let fsize    = t.font_size;
-        let accent   = t.accent.to_iced();
-        let fg       = t.foreground.to_iced();
-        let use_nerd = t.use_nerd_icons;
+        let now       = Instant::now();
+        let t         = &self.theme;
+        let fsize     = t.font_size;
+        let fg        = t.foreground.to_iced();
+        let use_nerd  = t.use_nerd_icons;
         let btn_style = self.button_style.as_str();
 
         // Animation progress: 0.0 = just opened, 1.0 = fully visible.
@@ -139,42 +138,46 @@ impl PowerMenu {
         };
         let modal_bg = modal_bg_color.to_iced();
 
-        // Modal border: subtle accent-tinted edge.
-        let modal_border_col = Color { a: accent.a * 0.3 * prog, ..accent };
-
-        // Danger color for reboot / shutdown hover tints.
-        let danger_col = Color::from_rgba(0.92, 0.28, 0.28, prog);
+        // Modal border: faint line around the modal card.
+        let modal_border_col = Color { a: 0.18 * prog, ..fg };
 
         // Dark overlay that covers the whole screen.
-        let overlay_bg = Color::from_rgba(0.0, 0.0, 0.0, 0.60 * prog);
+        let overlay_bg = Color::from_rgba(0.0, 0.0, 0.0, 0.65 * prog);
 
         // ── Action meta-table ─────────────────────────────────────────────────
-        let all_action_info: &[(&str, &str, &str, &str)] = &[
-            ("lock",      "\u{f033e}", "Lock",      "\u{1f512}"),
-            ("sleep",     "\u{f0904}", "Sleep",     "\u{1f4a4}"),
-            ("hibernate", "\u{f04b2}", "Hibernate", "\u{1f319}"),
-            ("logout",    "\u{f05fd}", "Log Out",   "\u{1f6aa}"),
-            ("reboot",    "\u{f0453}", "Reboot",    "\u{1f504}"),
-            ("shutdown",  "\u{f0425}", "Shutdown",  "\u{23fb}"),
+        // Each action has: key, nerd glyph, label, emoji fallback, semantic color (RGBA).
+        // Semantic colors are vivid so icons pop on any dark background.
+        #[allow(clippy::type_complexity)]
+        let all_action_info: &[(&str, &str, &str, &str, (f32,f32,f32))] = &[
+            ("lock",      "\u{f033e}", "Lock",      "\u{1f512}", (0.54, 0.71, 0.98)), // blue
+            ("sleep",     "\u{f0904}", "Sleep",     "\u{1f4a4}", (0.79, 0.65, 0.97)), // lavender
+            ("hibernate", "\u{f04b2}", "Hibernate", "\u{1f319}", (0.58, 0.89, 0.84)), // teal
+            ("logout",    "\u{f05fd}", "Log Out",   "\u{1f6aa}", (0.98, 0.89, 0.68)), // yellow
+            ("reboot",    "\u{f0453}", "Reboot",    "\u{1f504}", (0.98, 0.70, 0.53)), // orange
+            ("shutdown",  "\u{f0425}", "Shutdown",  "\u{23fb}",  (0.96, 0.54, 0.67)), // red/pink
         ];
 
         // ── Card builder ──────────────────────────────────────────────────────
         let card_bg = Color::from_rgba(
-            (bg.r + (fgc.r - bg.r) * 0.08).clamp(0.0, 1.0),
-            (bg.g + (fgc.g - bg.g) * 0.08).clamp(0.0, 1.0),
-            (bg.b + (fgc.b - bg.b) * 0.08).clamp(0.0, 1.0),
-            0.90 * prog,
+            (bg.r + (fgc.r - bg.r) * 0.10).clamp(0.0, 1.0),
+            (bg.g + (fgc.g - bg.g) * 0.10).clamp(0.0, 1.0),
+            (bg.b + (fgc.b - bg.b) * 0.10).clamp(0.0, 1.0),
+            0.92 * prog,
         );
-        let dim_border = Color { a: 0.25 * prog, ..fg };
+        let dim_border = Color { a: 0.20 * prog, ..fg };
 
         let make_card = |action: &str| -> Option<Element<'_, Message>> {
             let info  = all_action_info.iter().find(|(k, ..)| *k == action)?;
-            let (key, nerd_icon, label, ascii_icon) = info;
+            let (key, nerd_icon, label, ascii_icon, (cr, cg, cb)) = info;
+            // In the powermenu overlay we always try nerd glyphs first.
+            // If the font can't render them, the emoji fallback is used instead.
             let icon  = if use_nerd { *nerd_icon } else { *ascii_icon };
             let key   = key.to_string();
-            let is_danger = matches!(action, "reboot" | "shutdown");
+            let _is_danger = matches!(action, "reboot" | "shutdown");
 
-            let icon_col  = Color { a: accent.a  * prog, ..accent };
+            // Semantic per-action color — always vivid/readable on dark backgrounds.
+            let action_color = Color::from_rgba(*cr, *cg, *cb, prog);
+            let icon_col  = action_color;
             let label_col = Color { a: fg.a * prog, ..fg };
 
             // Content inside the card — respects button_style config.
@@ -229,17 +232,15 @@ impl PowerMenu {
                     .style(move |_: &iced::Theme, status| {
                         let hovered = status == iced::widget::button::Status::Hovered
                             || status == iced::widget::button::Status::Pressed;
+                        // Hover background: action's semantic color at low opacity.
                         let bg_col = if hovered {
-                            if is_danger {
-                                Color { a: 0.14 * prog, r: 0.92, g: 0.28, b: 0.28 }
-                            } else {
-                                Color { a: 0.14 * prog, ..accent }
-                            }
+                            Color { a: 0.16 * prog, ..action_color }
                         } else {
                             card_bg
                         };
+                        // Border: semantic color on hover, dim otherwise.
                         let border_col = if hovered {
-                            if is_danger { danger_col } else { Color { a: prog, ..accent } }
+                            Color { a: 0.80 * prog, ..action_color }
                         } else {
                             dim_border
                         };

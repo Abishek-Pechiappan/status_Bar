@@ -1,15 +1,15 @@
-use crate::helpers::mini_bar;
 use bar_core::{event::Message, state::AppState};
 use bar_theme::Theme;
 use iced::{
-    widget::{row, text},
-    Alignment, Element,
+    widget::{column, container, row, text},
+    Alignment, Background, Border, Element, Length,
 };
 
-/// Displays battery level with a fill bar and state-colored icon/text.
+/// Battery widget with a progress-border design:
 ///
-/// Green when charging, red when at or below the configured warn threshold.
-/// Hidden entirely when no battery is present (desktop / VM).
+/// - Border color = charge state (green=charging, red=warn, fg=normal)
+/// - Inner horizontal fill strip = charge level
+/// - Fully charged + plugged in → only a lightning icon (no clutter)
 #[derive(Debug, Default)]
 pub struct BatteryWidget;
 
@@ -27,32 +27,99 @@ impl BatteryWidget {
         let pct      = state.system.battery_percent?;
         let charging = state.system.battery_charging.unwrap_or(false);
         let frac     = pct as f32 / 100.0;
+        let fsize    = theme.font_size;
 
-        let col = if charging {
-            iced::Color::from_rgb8(0xa6, 0xe3, 0xa1)   // green
+        let green = iced::Color::from_rgb8(0xa6, 0xe3, 0xa1); // charging green
+        let warn  = iced::Color::from_rgb8(0xf3, 0x8b, 0xa8); // low battery red
+        let fg    = theme.foreground.to_iced();
+
+        // ── Fully charged + plugged in: just the lightning icon ───────────────
+        if charging && pct >= 100 {
+            return Some(
+                text(if theme.use_nerd_icons { "\u{f0e7}" } else { "⚡" })
+                    .size(fsize + 2.0)
+                    .color(green)
+                    .into(),
+            );
+        }
+
+        // ── State color ───────────────────────────────────────────────────────
+        let fill_col = if charging {
+            green
         } else if pct <= theme.battery_warn_percent {
-            iced::Color::from_rgb8(0xf3, 0x8b, 0xa8)   // red
+            warn
         } else {
-            theme.foreground.to_iced()
+            fg
         };
 
         let icon = battery_icon(pct, charging, theme.use_nerd_icons);
-        let time = format_time(state.system.battery_time_min);
 
-        let time_el: Element<'a, Message> = if time.is_empty() {
-            iced::widget::Space::new().width(0).into()
-        } else {
-            text(format!("  {time}")).size(theme.font_size).color(col).into()
-        };
+        // ── Content row: icon  percentage ─────────────────────────────────────
+        let content: Element<'a, Message> = row![
+            text(icon).size(fsize).color(fill_col),
+            text(format!(" {pct}%")).size(fsize).color(fg),
+        ]
+        .spacing(2.0)
+        .align_y(Alignment::Center)
+        .into();
+
+        // ── Thin fill-strip (progress bar) below the text ─────────────────────
+        let strip_total = 60.0_f32;
+        let fill_w      = (frac.clamp(0.0, 1.0) * strip_total).max(2.0);
+        let empty_w     = (strip_total - fill_w).max(0.0);
+        let strip_h     = 3.0_f32;
+
+        let track_col = iced::Color { a: 0.15, ..fg };
+        let fill_solid = iced::Color { a: 0.90, ..fill_col };
+
+        let filled: Element<'a, Message> = container(
+            iced::widget::Space::new()
+                .width(Length::Fixed(fill_w))
+                .height(Length::Fixed(strip_h)),
+        )
+        .style(move |_: &iced::Theme| iced::widget::container::Style {
+            background: Some(Background::Color(fill_solid)),
+            border: Border { radius: 99.0.into(), ..Default::default() },
+            ..Default::default()
+        })
+        .into();
+
+        let empty: Element<'a, Message> = iced::widget::Space::new()
+            .width(Length::Fixed(empty_w))
+            .height(Length::Fixed(strip_h))
+            .into();
+
+        let strip: Element<'a, Message> = container(
+            row![filled, empty].height(Length::Fixed(strip_h)),
+        )
+        .width(Length::Fixed(strip_total))
+        .height(Length::Fixed(strip_h))
+        .style(move |_: &iced::Theme| iced::widget::container::Style {
+            background: Some(Background::Color(track_col)),
+            border: Border { radius: 99.0.into(), ..Default::default() },
+            ..Default::default()
+        })
+        .into();
+
+        // ── Outer container: colored border that acts as the progress frame ────
+        let border_col = iced::Color { a: 0.55, ..fill_col };
+        let radius     = theme.border_radius;
 
         Some(
-            row![
-                text(format!("{icon}  ")).size(theme.font_size).color(col),
-                mini_bar(frac, 36.0, theme),
-                text(format!("  {pct}%")).size(theme.font_size).color(col),
-                time_el,
-            ]
-            .align_y(Alignment::Center)
+            container(
+                column![content, strip]
+                    .spacing(5.0)
+                    .align_x(Alignment::Center),
+            )
+            .padding([4.0, 8.0])
+            .style(move |_: &iced::Theme| iced::widget::container::Style {
+                border: Border {
+                    color: border_col,
+                    width: 1.5,
+                    radius: radius.into(),
+                },
+                ..Default::default()
+            })
             .into(),
         )
     }
@@ -60,19 +127,19 @@ impl BatteryWidget {
 
 fn battery_icon(pct: u8, charging: bool, nerd: bool) -> &'static str {
     if nerd {
-        if charging { return "󰂄"; }
+        if charging { return "\u{f0e7}"; } // ⚡ nerd flash/bolt
         match pct {
-            91..=100 => "󰁹",
-            81..=90  => "󰂂",
-            71..=80  => "󰂁",
-            61..=70  => "󰂀",
-            51..=60  => "󰁿",
-            41..=50  => "󰁾",
-            31..=40  => "󰁽",
-            21..=30  => "󰁼",
-            11..=20  => "󰁻",
-            1..=10   => "󰁺",
-            _        => "󰂃",
+            91..=100 => "\u{f079}",  // 󰁹
+            81..=90  => "\u{f082}",  // 󰂂
+            71..=80  => "\u{f081}",  // 󰂁
+            61..=70  => "\u{f080}",  // 󰂀
+            51..=60  => "\u{f07f}",  // 󰁿
+            41..=50  => "\u{f07e}",  // 󰁾
+            31..=40  => "\u{f07d}",  // 󰁽
+            21..=30  => "\u{f07c}",  // 󰁼
+            11..=20  => "\u{f07b}",  // 󰁻
+            1..=10   => "\u{f07a}",  // 󰁺
+            _        => "\u{f083}",  // 󰂃 unknown
         }
     } else {
         if charging { return "⚡"; }
@@ -83,18 +150,5 @@ fn battery_icon(pct: u8, charging: bool, nerd: bool) -> &'static str {
             20..=39  => "▎",
             _        => "▏",
         }
-    }
-}
-
-/// Format minutes into a compact human-readable string: "1h 23m" or "45m".
-fn format_time(mins: Option<u32>) -> String {
-    let m = match mins {
-        Some(m) if m > 0 => m,
-        _ => return String::new(),
-    };
-    if m >= 60 {
-        format!("{}h {}m", m / 60, m % 60)
-    } else {
-        format!("{m}m")
     }
 }
