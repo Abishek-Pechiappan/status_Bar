@@ -714,35 +714,30 @@ impl Bar {
         let bar_inner: Element<'_, Message> = if power_inline_active {
             self.view_power_inline()
         } else {
-            let gap       = self.theme.gap as f32;
-            let pad       = self.theme.padding;
-            let radius    = self.theme.border_radius;
-            let wbg       = self.theme.widget_bg;
-            let pad_x     = self.theme.widget_pad_x;
-            let pad_y     = self.theme.widget_pad_y;
-            let wborder_w = self.theme.widget_border_width;
-            let wborder_c = self.theme.widget_border_color;
-            let hpad      = [0.0f32, pad as f32];
+            let gap  = self.theme.gap as f32;
+            let pad  = self.theme.padding;
+            let fg   = self.theme.foreground.to_iced();
+            let hpad = [0.0f32, pad as f32];
 
             let left_items: Vec<Element<'_, Message>> = self.config.left
                 .iter()
                 .filter_map(|w| {
                     self.render_widget(&w.kind)
-                        .map(|e| pill_wrap(e.map(Message::App), radius, wbg, pad_x, pad_y, wborder_w, wborder_c))
+                        .map(|e| pill_wrap(e.map(Message::App), fg))
                 })
                 .collect();
             let center_items: Vec<Element<'_, Message>> = self.config.center
                 .iter()
                 .filter_map(|w| {
                     self.render_widget(&w.kind)
-                        .map(|e| pill_wrap(e.map(Message::App), radius, wbg, pad_x, pad_y, wborder_w, wborder_c))
+                        .map(|e| pill_wrap(e.map(Message::App), fg))
                 })
                 .collect();
             let right_items: Vec<Element<'_, Message>> = self.config.right
                 .iter()
                 .filter_map(|w| {
                     self.render_widget(&w.kind)
-                        .map(|e| pill_wrap(e.map(Message::App), radius, wbg, pad_x, pad_y, wborder_w, wborder_c))
+                        .map(|e| pill_wrap(e.map(Message::App), fg))
                 })
                 .collect();
 
@@ -1792,24 +1787,15 @@ impl NotifDaemon {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn pill_wrap<'a>(
-    elem: Element<'a, Message>,
-    radius: f32,
-    bg: Option<ThemeColor>,
-    pad_x: u16,
-    pad_y: u16,
-    border_width: u32,
-    border_color: ThemeColor,
-) -> Element<'a, Message> {
-    let border_color_iced = border_color.to_iced();
+fn pill_wrap<'a>(elem: Element<'a, Message>, fg: iced::Color) -> Element<'a, Message> {
+    let border_col = iced::Color { a: 0.18, ..fg };
     container(elem)
-        .padding([pad_y as f32, pad_x as f32])
+        .padding([4.0, 10.0])
         .style(move |_: &iced::Theme| iced::widget::container::Style {
-            background: bg.map(|c| iced::Background::Color(c.to_iced())),
             border: iced::Border {
-                radius: radius.into(),
-                color:  border_color_iced,
-                width:  border_width as f32,
+                radius: 99.0.into(),
+                color:  border_col,
+                width:  1.0,
             },
             ..Default::default()
         })

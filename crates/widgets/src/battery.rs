@@ -103,7 +103,6 @@ impl BatteryWidget {
 
         // ── Outer container: colored border that acts as the progress frame ────
         let border_col = iced::Color { a: 0.55, ..fill_col };
-        let radius     = theme.border_radius;
 
         Some(
             container(
@@ -116,7 +115,7 @@ impl BatteryWidget {
                 border: Border {
                     color: border_col,
                     width: 1.5,
-                    radius: radius.into(),
+                    radius: 99.0.into(),
                 },
                 ..Default::default()
             })
