@@ -62,6 +62,8 @@ pub struct Theme {
     pub clock_show_seconds: bool,
     /// Battery percent at which the battery icon switches to a low-power glyph.
     pub battery_warn_percent: u8,
+    /// Show tiny window-count dots below each workspace indicator.
+    pub workspace_show_counts: bool,
 }
 
 impl Theme {
@@ -105,6 +107,7 @@ impl Theme {
             brightness_show_slider: cfg.brightness_show_slider,
             clock_show_seconds:     cfg.clock_show_seconds,
             battery_warn_percent:   cfg.battery_warn_percent,
+            workspace_show_counts:  cfg.workspace_show_counts,
         }
     }
 }

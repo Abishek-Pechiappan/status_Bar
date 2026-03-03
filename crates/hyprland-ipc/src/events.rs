@@ -11,6 +11,10 @@ pub enum HyprlandEvent {
     ActiveLayout(String),
     /// A window was opened, closed, or moved — client list needs refreshing.
     WindowListChanged,
+    /// Active submap changed.  Empty string = back to default binds.
+    SubMap(String),
+    /// Screen-share / recording started or stopped.
+    Screencast(bool),
     /// An event we don't handle yet — carries the raw line for debugging.
     Unknown(String),
 }
@@ -79,6 +83,8 @@ pub fn parse_event(line: &str) -> HyprlandEvent {
         // Window open/close/move — client list is stale, needs refresh.
         "openwindow" | "closewindow" | "movewindow" | "movewindowv2"
         | "windowtitle" | "windowtitlev2" => HyprlandEvent::WindowListChanged,
+        "submap" => HyprlandEvent::SubMap(data.trim().to_string()),
+        "screencast" => HyprlandEvent::Screencast(data.trim().starts_with('1')),
         _ => HyprlandEvent::Unknown(line.to_string()),
     }
 }

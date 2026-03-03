@@ -15,10 +15,11 @@ use bar_core::{
 use bar_ipc::{fetch_active_window, fetch_workspaces, HyprlandEvent, HyprlandIpc};
 use bar_theme::{Color as ThemeColor, Theme};
 use bar_widgets::{
-    BatteryWidget, BrightnessWidget, ClockWidget, CpuWidget, CustomWidget, DiskWidget,
-    KeyboardWidget, LoadWidget, MediaWidget, MemoryWidget, NetworkWidget, NotifyWidget,
-    PowerWidget, SeparatorWidget, SwapWidget, TempWidget, TitleWidget, TrayWidget, UptimeWidget,
-    VolumeWidget, WorkspaceWidget,
+    BatteryWidget, BluetoothWidget, BrightnessWidget, ClockWidget, CpuWidget, CustomWidget,
+    DiskWidget, GpuWidget, KeyboardWidget, LoadWidget, MediaWidget, MemoryWidget, NetworkWidget,
+    NotifyWidget, PowerWidget, ScreencastWidget, SeparatorWidget, SubmapWidget, SwapWidget,
+    TempWidget, TitleWidget, TrayWidget, UpdatesWidget, UptimeWidget, VolumeWidget,
+    WorkspaceWidget,
 };
 use chrono::Local;
 use futures::channel::mpsc::Sender;
@@ -41,6 +42,8 @@ const DEFAULT_SYSTEM_INTERVAL_MS: u64 = 2_000;
 
 /// Height of the notification panel that drops below the bar (pixels).
 const NOTIFY_PANEL_HEIGHT: u32 = 300;
+/// Height of the calendar panel that drops below the bar (pixels).
+const CALENDAR_PANEL_HEIGHT: u32 = 220;
 
 /// Custom shell command set once from config at startup.
 static CUSTOM_CMD: OnceLock<String> = OnceLock::new();
@@ -137,12 +140,21 @@ struct Bar {
     notify:     NotifyWidget,
     tray:       TrayWidget,
     power:      PowerWidget,
+    submap:     SubmapWidget,
+    screencast: ScreencastWidget,
+    gpu:        GpuWidget,
+    bluetooth:  BluetoothWidget,
+    updates:    UpdatesWidget,
     // EMA-smoothed system metrics
     ema_cpu:     f32,
     ema_net_rx:  f32,
     ema_net_tx:  f32,
-    // Rolling CPU average history for sparkline (newest at back, max 20)
-    cpu_history: std::collections::VecDeque<f32>,
+    // Rolling histories for sparklines (newest at back, max 20)
+    cpu_history:    std::collections::VecDeque<f32>,
+    net_rx_history: std::collections::VecDeque<f32>,
+    net_tx_history: std::collections::VecDeque<f32>,
+    // Whether the calendar panel is currently open
+    calendar_open: bool,
 }
 
 impl Bar {
@@ -175,10 +187,18 @@ impl Bar {
             notify:     NotifyWidget::new(),
             tray:       TrayWidget::new(),
             power:      PowerWidget::new(),
+            submap:     SubmapWidget::new(),
+            screencast: ScreencastWidget::new(),
+            gpu:        GpuWidget::new(),
+            bluetooth:  BluetoothWidget::new(),
+            updates:    UpdatesWidget::new(),
             ema_cpu:     0.0,
             ema_net_rx:  0.0,
             ema_net_tx:  0.0,
-            cpu_history: std::collections::VecDeque::with_capacity(20),
+            cpu_history:    std::collections::VecDeque::with_capacity(20),
+            net_rx_history: std::collections::VecDeque::with_capacity(20),
+            net_tx_history: std::collections::VecDeque::with_capacity(20),
+            calendar_open: false,
         };
 
         let init_task = Task::perform(
@@ -252,6 +272,15 @@ impl Bar {
                 if self.cpu_history.len() >= HISTORY { self.cpu_history.pop_front(); }
                 self.cpu_history.push_back(self.ema_cpu);
 
+                // Scale net rates for sparkline (100 MB/s = 100%)
+                const NET_MAX: f32 = 100_000_000.0;
+                let rx_pct = (self.ema_net_rx / NET_MAX * 100.0).min(100.0);
+                let tx_pct = (self.ema_net_tx / NET_MAX * 100.0).min(100.0);
+                if self.net_rx_history.len() >= HISTORY { self.net_rx_history.pop_front(); }
+                if self.net_tx_history.len() >= HISTORY { self.net_tx_history.pop_front(); }
+                self.net_rx_history.push_back(rx_pct);
+                self.net_tx_history.push_back(tx_pct);
+
                 self.state.system = snapshot;
             }
 
@@ -269,12 +298,14 @@ impl Bar {
 
             // ── Notifications ─────────────────────────────────────────────────
             AppMessage::NotificationReceived { id, app_name, summary, body } => {
-                // Replace an existing entry with the same id (replaces_id flow).
-                self.state.notifications.retain(|n| n.id != id);
-                self.state.notifications.push(NotifEntry { id, app_name, summary, body });
-                // Cap history at 50 entries (drop oldest).
-                if self.state.notifications.len() > 50 {
-                    self.state.notifications.remove(0);
+                if !self.state.dnd_enabled {
+                    // Replace an existing entry with the same id (replaces_id flow).
+                    self.state.notifications.retain(|n| n.id != id);
+                    self.state.notifications.push(NotifEntry { id, app_name, summary, body });
+                    // Cap history at 50 entries (drop oldest).
+                    if self.state.notifications.len() > 50 {
+                        self.state.notifications.remove(0);
+                    }
                 }
             }
             AppMessage::NotificationClosed(id) => {
@@ -282,6 +313,7 @@ impl Bar {
                 return self.maybe_close_panel();
             }
             AppMessage::NotifyPanelToggle => {
+                if self.calendar_open { self.calendar_open = false; }
                 self.state.notify_panel_open = !self.state.notify_panel_open;
                 return self.sync_surface_size();
             }
@@ -457,6 +489,25 @@ impl Bar {
                 );
             }
 
+            // ── New feature messages ──────────────────────────────────────────
+            AppMessage::SubMapChanged(name) => {
+                self.state.active_submap = name;
+            }
+            AppMessage::ScreencastChanged(on) => {
+                self.state.screencasting = on;
+            }
+            AppMessage::DndToggle => {
+                self.state.dnd_enabled = !self.state.dnd_enabled;
+            }
+            AppMessage::CalendarToggle => {
+                if self.state.notify_panel_open { self.state.notify_panel_open = false; }
+                self.calendar_open = !self.calendar_open;
+                return self.sync_surface_size();
+            }
+            AppMessage::UpdateCountRefreshed(count) => {
+                self.state.update_count = count;
+            }
+
             AppMessage::Tick | AppMessage::Shutdown => {}
         }
         Task::none()
@@ -471,7 +522,7 @@ impl Bar {
             "clock"       => Some(self.clock.view(&self.state, &self.theme)),
             "cpu"         => Some(self.cpu.view(&self.state, &self.theme, &self.cpu_history)),
             "memory"      => Some(self.memory.view(&self.state, &self.theme)),
-            "network"     => Some(self.network.view(&self.state, &self.theme)),
+            "network"     => Some(self.network.view(&self.state, &self.theme, &self.net_rx_history, &self.net_tx_history)),
             "uptime"      => Some(self.uptime.view(&self.state, &self.theme)),
             "load"        => Some(self.load.view(&self.state, &self.theme)),
             "notify"      => Some(self.notify.view(&self.state, &self.theme)),
@@ -487,6 +538,11 @@ impl Bar {
             "separator"   => Some(self.separator.view(&self.state, &self.theme)),
             "tray"        => Some(self.tray.view(&self.state, &self.theme)),
             "power"       => Some(self.power.view(&self.state, &self.theme)),
+            "submap"      => self.submap.view(&self.state, &self.theme),
+            "screencast"  => self.screencast.view(&self.state, &self.theme),
+            "gpu"         => self.gpu.view(&self.state, &self.theme),
+            "bluetooth"   => self.bluetooth.view(&self.state, &self.theme),
+            "updates"     => self.updates.view(&self.state, &self.theme),
             other => {
                 warn!("Unknown widget kind in config: {other}");
                 None
@@ -587,6 +643,10 @@ impl Bar {
 
         if self.state.notify_panel_open {
             column![bar_outer, self.view_notify_panel()]
+                .width(Length::Fill)
+                .into()
+        } else if self.calendar_open {
+            column![bar_outer, self.view_calendar_panel()]
                 .width(Length::Fill)
                 .into()
         } else {
@@ -712,6 +772,121 @@ impl Bar {
         .into()
     }
 
+    fn view_calendar_panel(&self) -> Element<'_, Message> {
+        use chrono::Datelike;
+
+        let now    = self.state.time;
+        let year   = now.year();
+        let month  = now.month();
+        let today  = now.day();
+        let fg     = self.theme.foreground.to_iced();
+        let dim    = self.theme.foreground.with_alpha(0.5).to_iced();
+        let accent = self.theme.accent.to_iced();
+        let fsize  = self.theme.font_size;
+
+        // Panel background — same blend as notify panel.
+        let bg  = self.theme.background;
+        let fgc = self.theme.foreground;
+        let mix = 0.12_f32;
+        let panel_bg = ThemeColor {
+            r: (bg.r + (fgc.r - bg.r) * mix).clamp(0.0, 1.0),
+            g: (bg.g + (fgc.g - bg.g) * mix).clamp(0.0, 1.0),
+            b: (bg.b + (fgc.b - bg.b) * mix).clamp(0.0, 1.0),
+            a: 0.98,
+        };
+        let bg_iced = panel_bg.to_iced();
+
+        let month_name = now.format("%B %Y").to_string();
+        let header = container(iced::widget::text(month_name).size(fsize).color(fg))
+            .padding([8.0, 12.0])
+            .width(Length::Fill);
+
+        // Day-of-week header row
+        let dow_row: Vec<Element<'_, Message>> = ["Mo","Tu","We","Th","Fr","Sa","Su"]
+            .iter()
+            .map(|&d| {
+                container(iced::widget::text(d).size(fsize - 2.0).color(dim))
+                    .width(Length::FillPortion(1))
+                    .center_x(Length::FillPortion(1))
+                    .into()
+            })
+            .collect();
+
+        // First weekday offset (Mon=0 .. Sun=6)
+        let first = chrono::NaiveDate::from_ymd_opt(year, month, 1).unwrap();
+        let start_offset = first.weekday().num_days_from_monday() as usize;
+
+        // Days in month
+        let next_month_first = if month == 12 {
+            chrono::NaiveDate::from_ymd_opt(year + 1, 1, 1)
+        } else {
+            chrono::NaiveDate::from_ymd_opt(year, month + 1, 1)
+        };
+        let days_in_month = (next_month_first.unwrap()
+            - chrono::Duration::days(1))
+            .day() as usize;
+
+        let total_cells = start_offset + days_in_month;
+        let num_rows = (total_cells + 6) / 7;
+        let mut week_rows: Vec<Element<'_, Message>> = Vec::new();
+
+        for row_i in 0..num_rows {
+            let cells: Vec<Element<'_, Message>> = (0..7)
+                .map(|col_i| {
+                    let cell = row_i * 7 + col_i;
+                    let day = if cell < start_offset || cell >= start_offset + days_in_month {
+                        None
+                    } else {
+                        Some((cell - start_offset + 1) as u32)
+                    };
+                    let (label, color) = match day {
+                        None    => ("  ".to_string(), dim),
+                        Some(d) => {
+                            let c = if d == today { accent } else { fg };
+                            (format!("{d:2}"), c)
+                        }
+                    };
+                    container(iced::widget::text(label).size(fsize - 1.0).color(color))
+                        .width(Length::FillPortion(1))
+                        .center_x(Length::FillPortion(1))
+                        .padding([2.0, 0.0])
+                        .into()
+                })
+                .collect();
+            week_rows.push(iced::widget::Row::from_vec(cells).width(Length::Fill).into());
+        }
+
+        let mut grid_rows: Vec<Element<'_, Message>> = vec![
+            iced::widget::Row::from_vec(dow_row).width(Length::Fill).into(),
+        ];
+        grid_rows.extend(week_rows);
+        let grid = iced::widget::Column::from_vec(grid_rows)
+            .spacing(2.0)
+            .padding(iced::Padding { top: 0.0, right: 8.0, bottom: 8.0, left: 8.0 })
+            .width(Length::Fill);
+
+        let top_border: Element<'_, Message> = container(iced::widget::Space::new())
+            .width(Length::Fill)
+            .height(Length::Fixed(2.0))
+            .style(move |_: &iced::Theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(accent)),
+                ..Default::default()
+            })
+            .into();
+
+        container(
+            column![top_border, header, iced::widget::rule::horizontal(1), grid]
+                .width(Length::Fill),
+        )
+        .width(Length::Fill)
+        .height(Length::Fixed(CALENDAR_PANEL_HEIGHT as f32))
+        .style(move |_: &iced::Theme| iced::widget::container::Style {
+            background: Some(iced::Background::Color(bg_iced)),
+            ..Default::default()
+        })
+        .into()
+    }
+
     // ── Subscriptions ─────────────────────────────────────────────────────────
 
     fn subscription(&self) -> Subscription<Message> {
@@ -724,6 +899,7 @@ impl Bar {
             Subscription::run(config_stream),
             Subscription::run(notify_stream),
             Subscription::run(clients_stream),
+            Subscription::run(updates_stream),
         ])
     }
 
@@ -741,15 +917,17 @@ impl Bar {
 
     // ── Panel helpers ─────────────────────────────────────────────────────────
 
-    /// Resize the layer-shell surface to match whether the panel is open.
+    /// Resize the layer-shell surface to match whether a panel is open.
     fn sync_surface_size(&self) -> Task<Message> {
         let bar_h   = self.config.global.height;
-        let total_h = if self.state.notify_panel_open {
-            bar_h + NOTIFY_PANEL_HEIGHT
+        let panel_h = if self.state.notify_panel_open {
+            NOTIFY_PANEL_HEIGHT
+        } else if self.calendar_open {
+            CALENDAR_PANEL_HEIGHT
         } else {
-            bar_h
+            0
         };
-        Task::done(Message::SizeChange((0, total_h)))
+        Task::done(Message::SizeChange((0, bar_h + panel_h)))
     }
 
     /// If no notifications remain and the panel is open, close the panel.
@@ -1019,6 +1197,29 @@ fn clients_stream() -> impl iced::futures::Stream<Item = Message> {
     })
 }
 
+/// Polls `checkupdates` every 5 minutes and sends the count to the bar.
+///
+/// `checkupdates` (pacman-contrib) prints one pending update per line and
+/// exits 0 when updates exist, 2 when up-to-date, or non-zero on error.
+fn updates_stream() -> impl iced::futures::Stream<Item = Message> {
+    iced::stream::channel(4, |mut sender: Sender<Message>| async move {
+        loop {
+            let count = tokio::process::Command::new("checkupdates")
+                .output()
+                .await
+                .ok()
+                .map(|out| {
+                    String::from_utf8_lossy(&out.stdout)
+                        .lines()
+                        .filter(|l| !l.trim().is_empty())
+                        .count() as u32
+                });
+            let _ = sender.try_send(Message::App(AppMessage::UpdateCountRefreshed(count)));
+            tokio::time::sleep(Duration::from_secs(300)).await;
+        }
+    })
+}
+
 // ── D-Bus notification interface ──────────────────────────────────────────────
 
 struct NotifDaemon {
@@ -1122,6 +1323,11 @@ fn convert_hypr_event(event: HyprlandEvent) -> Option<AppMessage> {
         }
         HyprlandEvent::Fullscreen(fs) => Some(AppMessage::FullscreenStateChanged(fs)),
         HyprlandEvent::ActiveLayout(layout) => Some(AppMessage::KeyboardLayoutChanged(layout)),
+        HyprlandEvent::SubMap(name) => {
+            let opt = if name.is_empty() { None } else { Some(name) };
+            Some(AppMessage::SubMapChanged(opt))
+        }
+        HyprlandEvent::Screencast(on) => Some(AppMessage::ScreencastChanged(on)),
         // WindowListChanged is handled inline in ipc_stream — return None here.
         HyprlandEvent::WindowListChanged
         | HyprlandEvent::MonitorFocused(_)

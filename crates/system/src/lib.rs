@@ -29,6 +29,14 @@ pub fn spawn_monitor(interval_ms: u64, custom_cmd: String) -> mpsc::Receiver<Sys
         let mut ticker     = time::interval(interval);
         let mut tick_count: u32 = 0;
 
+        // Cache slow values (GPU, BT) — only refresh every 5 ticks.
+        let mut prev_gpu_pct:       Option<f32>    = None;
+        let mut prev_gpu_temp:      Option<f32>    = None;
+        let mut prev_gpu_mem_used:  Option<u64>    = None;
+        let mut prev_gpu_mem_total: Option<u64>    = None;
+        let mut prev_bt_connected:  bool           = false;
+        let mut prev_bt_name:       Option<String> = None;
+
         loop {
             ticker.tick().await;
             tick_count = tick_count.wrapping_add(1);
@@ -44,8 +52,22 @@ pub fn spawn_monitor(interval_ms: u64, custom_cmd: String) -> mpsc::Receiver<Sys
                 components.refresh(false);
             }
 
+            // GPU and BT are slow subprocess/sysfs reads — refresh every 5 ticks.
+            if tick_count % 5 == 0 {
+                let (gp, gt, gmu, gmt) = read_gpu().await;
+                let (bt_c, bt_n) = read_bluetooth().await;
+                prev_gpu_pct       = gp;
+                prev_gpu_temp      = gt;
+                prev_gpu_mem_used  = gmu;
+                prev_gpu_mem_total = gmt;
+                prev_bt_connected  = bt_c;
+                prev_bt_name       = bt_n;
+            }
+
             let snapshot = take_snapshot(
                 &sys, &networks, &disks, &components, interval_secs, &custom_cmd,
+                prev_gpu_pct, prev_gpu_temp, prev_gpu_mem_used, prev_gpu_mem_total,
+                prev_bt_connected, prev_bt_name.clone(),
             ).await;
 
             if tx.send(snapshot).await.is_err() {
@@ -57,6 +79,7 @@ pub fn spawn_monitor(interval_ms: u64, custom_cmd: String) -> mpsc::Receiver<Sys
     rx
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn take_snapshot(
     sys:        &System,
     networks:   &Networks,
@@ -64,6 +87,12 @@ async fn take_snapshot(
     components: &Components,
     interval_secs: f64,
     custom_cmd: &str,
+    gpu_percent:    Option<f32>,
+    gpu_temp:       Option<f32>,
+    gpu_mem_used:   Option<u64>,
+    gpu_mem_total:  Option<u64>,
+    bt_connected:   bool,
+    bt_device_name: Option<String>,
 ) -> SystemSnapshot {
     // ── CPU ──────────────────────────────────────────────────────────────────
     let cpu_per_core: Vec<f32> = sys.cpus().iter().map(|c| c.cpu_usage()).collect();
@@ -165,6 +194,12 @@ async fn take_snapshot(
         media_artist,
         media_playing,
         custom_output,
+        gpu_percent,
+        gpu_temp,
+        gpu_mem_used,
+        gpu_mem_total,
+        bt_connected,
+        bt_device_name,
     }
 }
 
@@ -284,4 +319,93 @@ async fn run_custom(cmd: &str) -> String {
         }
         _ => String::new(),
     }
+}
+
+// ── GPU reading ───────────────────────────────────────────────────────────────
+
+/// Try AMD sysfs first, then fall back to nvidia-smi.
+async fn read_gpu() -> (Option<f32>, Option<f32>, Option<u64>, Option<u64>) {
+    if let Some(pct) = read_amd_gpu_pct() {
+        let temp = read_amd_gpu_temp();
+        let (used, total) = read_amd_vram();
+        return (Some(pct), temp, used, total);
+    }
+    read_nvidia_gpu().await
+}
+
+fn read_amd_gpu_pct() -> Option<f32> {
+    let dir = std::fs::read_dir("/sys/class/drm").ok()?;
+    for entry in dir.flatten() {
+        let path = entry.path().join("device/gpu_busy_percent");
+        if let Ok(s) = std::fs::read_to_string(&path) {
+            if let Ok(v) = s.trim().parse::<f32>() {
+                return Some(v);
+            }
+        }
+    }
+    None
+}
+
+fn read_amd_gpu_temp() -> Option<f32> {
+    let dir = std::fs::read_dir("/sys/class/hwmon").ok()?;
+    for entry in dir.flatten() {
+        let name = std::fs::read_to_string(entry.path().join("name")).ok()?;
+        if name.trim() == "amdgpu" {
+            let raw = std::fs::read_to_string(entry.path().join("temp1_input")).ok()?;
+            return raw.trim().parse::<f32>().ok().map(|v| v / 1000.0);
+        }
+    }
+    None
+}
+
+fn read_amd_vram() -> (Option<u64>, Option<u64>) {
+    let used  = std::fs::read_to_string("/sys/class/drm/card0/device/mem_info_vram_used")
+        .ok().and_then(|s| s.trim().parse().ok());
+    let total = std::fs::read_to_string("/sys/class/drm/card0/device/mem_info_vram_total")
+        .ok().and_then(|s| s.trim().parse().ok());
+    (used, total)
+}
+
+async fn read_nvidia_gpu() -> (Option<f32>, Option<f32>, Option<u64>, Option<u64>) {
+    let out = tokio::process::Command::new("nvidia-smi")
+        .args([
+            "--query-gpu=utilization.gpu,temperature.gpu,memory.used,memory.total",
+            "--format=csv,noheader,nounits",
+        ])
+        .output()
+        .await;
+    let text = match out {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        _ => return (None, None, None, None),
+    };
+    let parts: Vec<&str> = text.splitn(4, ',').collect();
+    let pct   = parts.first().and_then(|s| s.trim().parse().ok());
+    let temp  = parts.get(1).and_then(|s| s.trim().parse().ok());
+    // nvidia-smi reports memory in MiB — convert to bytes.
+    let used  = parts.get(2).and_then(|s| s.trim().parse::<f64>().ok())
+        .map(|v| (v * 1_048_576.0) as u64);
+    let total = parts.get(3).and_then(|s| s.trim().parse::<f64>().ok())
+        .map(|v| (v * 1_048_576.0) as u64);
+    (pct, temp, used, total)
+}
+
+// ── Bluetooth reading ─────────────────────────────────────────────────────────
+
+/// Returns `(connected, device_name)`.  Uses `bluetoothctl devices Connected`.
+async fn read_bluetooth() -> (bool, Option<String>) {
+    let out = tokio::process::Command::new("bluetoothctl")
+        .args(["devices", "Connected"])
+        .output()
+        .await;
+    let text = match out {
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+        _ => return (false, None),
+    };
+    // Each line: "Device AA:BB:CC:DD:EE:FF Device Name"
+    let first = text.lines().next().unwrap_or("");
+    if first.is_empty() {
+        return (false, None);
+    }
+    let name = first.splitn(3, ' ').nth(2).map(|s| s.to_string());
+    (true, name)
 }

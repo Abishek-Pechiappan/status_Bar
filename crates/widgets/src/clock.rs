@@ -1,7 +1,7 @@
 use bar_core::{event::Message, state::AppState};
 use bar_theme::Theme;
 use iced::{
-    widget::{row, text},
+    widget::{mouse_area, row, text},
     Alignment, Element,
 };
 
@@ -28,12 +28,15 @@ impl ClockWidget {
         let date_str = state.time.format(&theme.date_format).to_string();
         let fg = theme.foreground.to_iced();
 
-        row![
-            text(date_str).size(theme.font_size).color(fg),
-            text("  "),
-            text(time_str).size(theme.font_size).color(fg),
-        ]
-        .align_y(Alignment::Center)
+        mouse_area(
+            row![
+                text(date_str).size(theme.font_size).color(fg),
+                text("  "),
+                text(time_str).size(theme.font_size).color(fg),
+            ]
+            .align_y(Alignment::Center),
+        )
+        .on_press(Message::CalendarToggle)
         .into()
     }
 }

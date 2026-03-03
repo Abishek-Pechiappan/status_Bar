@@ -82,3 +82,38 @@ pub(crate) fn mini_sparkline<'a>(history: &VecDeque<f32>, theme: &Theme) -> Elem
 
     iced::widget::Row::from_vec(bars).spacing(1.0).into()
 }
+
+/// Same as `mini_sparkline` but lets the caller specify the bar color.
+/// Used to differentiate RX (accent) from TX (foreground dimmed) in network widget.
+pub(crate) fn mini_sparkline_colored<'a>(
+    history: &VecDeque<f32>,
+    theme: &Theme,
+    color: iced::Color,
+) -> Element<'a, Message> {
+    let max_h: f32 = theme.font_size;
+    let bar_w: f32 = 3.0;
+
+    let bars: Vec<Element<'a, Message>> = history
+        .iter()
+        .map(|&val| {
+            let h = ((val / 100.0) * max_h).max(1.0);
+            column![
+                iced::widget::Space::new().height(Length::Fixed(max_h - h)),
+                container(
+                    iced::widget::Space::new()
+                        .width(Length::Fixed(bar_w))
+                        .height(Length::Fixed(h)),
+                )
+                .style(move |_: &iced::Theme| container::Style {
+                    background: Some(Background::Color(color)),
+                    ..Default::default()
+                }),
+            ]
+            .width(Length::Fixed(bar_w))
+            .height(Length::Fixed(max_h))
+            .into()
+        })
+        .collect();
+
+    iced::widget::Row::from_vec(bars).spacing(1.0).into()
+}

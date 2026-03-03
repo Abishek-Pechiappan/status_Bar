@@ -176,6 +176,8 @@ pub struct ThemeConfig {
     pub clock_show_seconds: bool,
     /// Battery percentage at which the battery widget shows a low-power glyph.
     pub battery_warn_percent: u8,
+    /// Show tiny window-count dots below each workspace indicator.
+    pub workspace_show_counts: bool,
 }
 
 impl Default for ThemeConfig {
@@ -206,6 +208,7 @@ impl Default for ThemeConfig {
             brightness_show_slider: false,
             clock_show_seconds:     false,
             battery_warn_percent:   20,
+            workspace_show_counts:  false,
         }
     }
 }

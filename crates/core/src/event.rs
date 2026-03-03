@@ -82,6 +82,22 @@ pub enum Message {
     /// User clicked a tray entry — focus the window at the given address.
     WindowFocusRequested(String),
 
+    // ── Hyprland IPC (extended) ───────────────────────────────────────────────
+    /// Hyprland submap changed (`None` = back to default binds).
+    SubMapChanged(Option<String>),
+    /// Screen-share / recording state changed.
+    ScreencastChanged(bool),
+
+    // ── UI state ──────────────────────────────────────────────────────────────
+    /// User toggled Do-Not-Disturb mode.
+    DndToggle,
+    /// User clicked the clock widget — toggle the calendar popup panel.
+    CalendarToggle,
+
+    // ── Package updates ───────────────────────────────────────────────────────
+    /// Package update count refreshed (`None` = `checkupdates` unavailable).
+    UpdateCountRefreshed(Option<u32>),
+
     // ── Internal ──────────────────────────────────────────────────────────────
     /// One-second timer tick — used to update the clock.
     Tick,

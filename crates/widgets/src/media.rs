@@ -2,8 +2,8 @@ use bar_core::{event::Message, state::AppState};
 use bar_theme::Theme;
 use iced::{
     mouse::ScrollDelta,
-    widget::{mouse_area, text},
-    Element,
+    widget::{button, mouse_area, row, text},
+    Alignment, Element,
 };
 
 /// Displays the current media player track via playerctl.
@@ -48,15 +48,33 @@ impl MediaWidget {
             }
         };
 
+        let prev_btn = button(
+            text(if theme.use_nerd_icons { "󰒮" } else { "⏮" }).size(theme.font_size),
+        )
+        .on_press(Message::MediaPrev)
+        .style(iced::widget::button::text)
+        .padding(0);
+
+        let label_el = mouse_area(text(label).size(theme.font_size))
+            .on_press(Message::MediaPlayPause)
+            .on_scroll(|delta| {
+                let y = match delta {
+                    ScrollDelta::Lines { y, .. } | ScrollDelta::Pixels { y, .. } => y,
+                };
+                if y > 0.0 { Message::MediaNext } else { Message::MediaPrev }
+            });
+
+        let next_btn = button(
+            text(if theme.use_nerd_icons { "󰒭" } else { "⏭" }).size(theme.font_size),
+        )
+        .on_press(Message::MediaNext)
+        .style(iced::widget::button::text)
+        .padding(0);
+
         Some(
-            mouse_area(text(label).size(theme.font_size))
-                .on_press(Message::MediaPlayPause)
-                .on_scroll(|delta| {
-                    let y = match delta {
-                        ScrollDelta::Lines { y, .. } | ScrollDelta::Pixels { y, .. } => y,
-                    };
-                    if y > 0.0 { Message::MediaNext } else { Message::MediaPrev }
-                })
+            row![prev_btn, label_el, next_btn]
+                .spacing(4)
+                .align_y(Alignment::Center)
                 .into(),
         )
     }

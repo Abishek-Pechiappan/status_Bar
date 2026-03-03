@@ -46,6 +46,14 @@ pub struct AppState {
     pub notify_panel_open: bool,
     /// All currently open windows / clients (from `hyprctl clients -j`).
     pub clients: Vec<ClientInfo>,
+    /// Active Hyprland submap name, `None` = default binds.
+    pub active_submap: Option<String>,
+    /// `true` while Hyprland is screen-sharing or recording.
+    pub screencasting: bool,
+    /// Do-Not-Disturb: when `true`, incoming notifications are silently dropped.
+    pub dnd_enabled: bool,
+    /// Number of available package updates, `None` = not yet checked.
+    pub update_count: Option<u32>,
 }
 
 impl Default for AppState {
@@ -61,6 +69,10 @@ impl Default for AppState {
             notifications: Vec::new(),
             notify_panel_open: false,
             clients: Vec::new(),
+            active_submap: None,
+            screencasting: false,
+            dnd_enabled: false,
+            update_count: None,
         }
     }
 }
@@ -132,6 +144,18 @@ pub struct SystemSnapshot {
     pub media_playing: bool,
     /// Output of the user-configured custom shell command (empty if none).
     pub custom_output: String,
+    /// GPU utilisation 0–100%, `None` if no GPU found.
+    pub gpu_percent: Option<f32>,
+    /// GPU temperature in °C, `None` if unavailable.
+    pub gpu_temp: Option<f32>,
+    /// GPU VRAM used in bytes, `None` if unavailable.
+    pub gpu_mem_used: Option<u64>,
+    /// GPU VRAM total in bytes, `None` if unavailable.
+    pub gpu_mem_total: Option<u64>,
+    /// `true` when at least one Bluetooth device is connected.
+    pub bt_connected: bool,
+    /// Name of the first connected Bluetooth device, `None` if none.
+    pub bt_device_name: Option<String>,
 }
 
 impl SystemSnapshot {

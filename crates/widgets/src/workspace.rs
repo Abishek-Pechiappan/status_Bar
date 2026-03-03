@@ -58,11 +58,27 @@ impl WorkspaceWidget {
                     (ws.name.clone(), color)
                 };
 
-                button(text(label).size(theme.font_size).color(color))
+                let ws_btn = button(text(label).size(theme.font_size).color(color))
                     .on_press(Message::WorkspaceSwitchRequested(id))
                     .padding(0)
-                    .style(button::text)
+                    .style(button::text);
+
+                if theme.workspace_show_counts && ws.windows > 0 {
+                    let dots: String = "·".repeat(ws.windows.min(5) as usize);
+                    let dot_col = if is_active {
+                        theme.accent.to_iced()
+                    } else {
+                        theme.foreground.with_alpha(0.4).to_iced()
+                    };
+                    iced::widget::column![
+                        ws_btn,
+                        text(dots).size(theme.font_size * 0.55).color(dot_col),
+                    ]
+                    .align_x(iced::Alignment::Center)
                     .into()
+                } else {
+                    ws_btn.into()
+                }
             })
             .collect();
 
