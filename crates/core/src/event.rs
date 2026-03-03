@@ -98,6 +98,20 @@ pub enum Message {
     /// Package update count refreshed (`None` = `checkupdates` unavailable).
     UpdateCountRefreshed(Option<u32>),
 
+    // ── Power panel ───────────────────────────────────────────────────────────
+    /// User clicked the power widget — open/close the power panel
+    /// (style depends on `power_menu_style` config; overlay mode spawns process instead).
+    PowerPanelToggle,
+    /// User selected a power action from the panel.
+    /// Payload is the action key: `"lock"`, `"sleep"`, `"hibernate"`, `"logout"`, `"reboot"`, `"shutdown"`.
+    PowerActionTriggered(String),
+    /// Cursor entered a power action button (index 0–5) — start hover animation.
+    PowerHoverEnter(usize),
+    /// Cursor left a power action button (index 0–5) — reverse hover animation.
+    PowerHoverExit(usize),
+    /// 60 fps animation tick — active only while a power panel animation is in progress.
+    PowerAnimFrame,
+
     // ── Auto-hide ─────────────────────────────────────────────────────────────
     /// Cursor entered the bar surface — cancel any pending hide timer.
     BarMouseEnter,

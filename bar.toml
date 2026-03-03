@@ -9,6 +9,12 @@ opacity        = 0.95
 margin         = 0         # horizontal gap from screen edges (floating bar)
 margin_top     = 0         # vertical gap from screen edge   (floating bar)
 
+# ── Power menu ────────────────────────────────────────────────────────────────
+lock_command    = "loginctl lock-session"   # command run when "Lock" is chosen
+power_menu_style = "dropdown"  # "dropdown" | "inline" | "overlay"
+power_anim_style = "slide"     # "slide" | "fade" | "scale" | "none"
+power_actions   = ["lock", "sleep", "hibernate", "logout", "reboot", "shutdown"]
+
 # ── Widget layout ─────────────────────────────────────────────────────────────
 # Three sections: left · center · right
 # Available kinds:
@@ -77,3 +83,4 @@ border_width = 0           # bar border width in px
 
 clock_format = "%H:%M"     # strftime format for time
 date_format  = "%a %d %b"  # strftime format for date
+power_button_style = "icon_label"  # "icon_label" | "icon_only" | "pill"

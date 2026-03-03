@@ -44,6 +44,8 @@ pub struct AppState {
     pub notifications: Vec<NotifEntry>,
     /// Whether the notification panel is currently expanded.
     pub notify_panel_open: bool,
+    /// Whether the power panel is open (dropdown or inline mode).
+    pub power_panel_open: bool,
     /// All currently open windows / clients (from `hyprctl clients -j`).
     pub clients: Vec<ClientInfo>,
     /// Active Hyprland submap name, `None` = default binds.
@@ -68,6 +70,7 @@ impl Default for AppState {
             time: Local::now(),
             notifications: Vec::new(),
             notify_panel_open: false,
+            power_panel_open:  false,
             clients: Vec::new(),
             active_submap: None,
             screencasting: false,

@@ -1,22 +1,25 @@
 //! `bar-powermenu` — full-screen power menu overlay for the bar.
 //!
-//! Launched as a child process by the bar's power widget.
-//! Reads the bar theme so colours match the rest of the desktop.
-//! Press Escape or click any action to dismiss.
+//! Launched as a child process by the bar's power widget (overlay mode).
+//! Reads the bar config so colours and button style match the rest of the desktop.
+//! Respects `power_actions` to show only configured actions.
+//! Press Escape or click the background to dismiss.
 
 use bar_config::{default_path, load as load_config};
 use bar_theme::Theme;
 use iced::{
-    widget::{column, container, row, text},
+    animation::{Animation, Easing},
+    widget::{column, container, mouse_area, row, text},
     Alignment, Background, Border, Color, Element, Length, Subscription, Task,
 };
-use iced::widget::{button, mouse_area};
+use iced::widget::button;
 use iced_layershell::{
     build_pattern::application,
     reexport::{Anchor, KeyboardInteractivity, Layer},
     settings::{LayerShellSettings, Settings},
     to_layer_message,
 };
+use std::time::{Duration, Instant};
 
 fn main() -> iced_layershell::Result {
     let config = load_config(default_path()).unwrap_or_default();
@@ -58,35 +61,42 @@ fn main() -> iced_layershell::Result {
 #[to_layer_message]
 #[derive(Debug, Clone)]
 enum Message {
-    /// User clicked one of the four action cards.
-    Act(PowerAction),
+    /// User clicked one of the action cards.
+    Act(String),
     /// Background click or Escape — close without doing anything.
     Dismiss,
     /// Raw keyboard event (for Escape handling).
     KeyEvent(iced::keyboard::Event),
-}
-
-#[derive(Debug, Clone, Copy)]
-enum PowerAction {
-    Lock,
-    Sleep,
-    Reboot,
-    Shutdown,
+    /// 60 fps animation tick (active only during entrance animation).
+    AnimFrame,
 }
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
 struct PowerMenu {
-    theme:        Theme,
-    lock_command: String,
+    theme:         Theme,
+    lock_command:  String,
+    /// Ordered list of action keys to display (from config).
+    actions:       Vec<String>,
+    /// Button visual style: "icon_label" | "icon_only" | "pill".
+    button_style:  String,
+    /// Entrance fade-in animation.
+    enter_anim:    Animation<bool>,
 }
 
 impl PowerMenu {
     fn new() -> (Self, Task<Message>) {
         let config = load_config(default_path()).unwrap_or_default();
         let theme  = Theme::from_config(&config.theme);
-        let lock_command = config.global.lock_command.clone();
-        (Self { theme, lock_command }, Task::none())
+        let lock_command  = config.global.lock_command.clone();
+        let actions       = config.global.power_actions.clone();
+        let button_style  = config.theme.power_button_style.clone();
+        // Start the entrance animation immediately.
+        let mut enter_anim = Animation::new(false)
+            .slow()
+            .easing(Easing::EaseOutCubic);
+        enter_anim.go_mut(true, Instant::now());
+        (Self { theme, lock_command, actions, button_style, enter_anim }, Task::none())
     }
 
     fn namespace() -> String {
@@ -96,21 +106,7 @@ impl PowerMenu {
     fn update(&mut self, msg: Message) -> Task<Message> {
         match msg {
             Message::Act(action) => {
-                match action {
-                    PowerAction::Lock => {
-                        // Split the configured lock command by whitespace so
-                        // e.g. "hyprlock --immediate" works correctly.
-                        let mut parts = self.lock_command.split_whitespace();
-                        if let Some(program) = parts.next() {
-                            let _ = std::process::Command::new(program)
-                                .args(parts.collect::<Vec<_>>())
-                                .spawn();
-                        }
-                    }
-                    PowerAction::Sleep    => { let _ = std::process::Command::new("systemctl").arg("suspend").spawn(); }
-                    PowerAction::Reboot   => { let _ = std::process::Command::new("systemctl").arg("reboot").spawn(); }
-                    PowerAction::Shutdown => { let _ = std::process::Command::new("systemctl").arg("poweroff").spawn(); }
-                }
+                execute_power_action(action, self.lock_command.clone());
                 std::process::exit(0);
             }
             Message::Dismiss => std::process::exit(0),
@@ -119,6 +115,7 @@ impl PowerMenu {
                     std::process::exit(0);
                 }
             }
+            Message::AnimFrame => {}
             _ => {}
         }
         Task::none()
@@ -127,101 +124,188 @@ impl PowerMenu {
     // ── View ──────────────────────────────────────────────────────────────────
 
     fn view(&self) -> Element<'_, Message> {
-        let t = &self.theme;
-
-        let actions: &[(&str, &str, PowerAction)] = &[
-            ("󰌾", "Lock",     PowerAction::Lock),
-            ("󰒲", "Sleep",    PowerAction::Sleep),
-            ("󰑓", "Reboot",   PowerAction::Reboot),
-            ("󰤆", "Shutdown", PowerAction::Shutdown),
-        ];
-
+        let now      = Instant::now();
+        let t        = &self.theme;
+        let fsize    = t.font_size;
         let accent   = t.accent.to_iced();
         let fg       = t.foreground.to_iced();
-        let card_bg  = Color::from_rgba8(0x1e, 0x1e, 0x2e, 0.90);
-        let card_hover = Color::from_rgba8(
-            (t.accent.r * 255.0) as u8,
-            (t.accent.g * 255.0) as u8,
-            (t.accent.b * 255.0) as u8,
-            0.22,
+        let use_nerd = t.use_nerd_icons;
+        let btn_style = self.button_style.as_str();
+
+        // Entrance fade progress (0 = transparent → 1 = fully visible).
+        let prog = self.enter_anim.interpolate(0.0f32, 1.0f32, now);
+
+        let card_bg = Color::from_rgba(
+            t.background.r,
+            t.background.g,
+            t.background.b,
+            0.88 * prog,
         );
+        let card_hover = Color {
+            a: 0.22 * prog,
+            ..accent
+        };
 
-        let cards: Vec<Element<'_, Message>> = actions
+        let all_action_info: &[(&str, &str, &str, &str)] = &[
+            // (key, nerd_icon, label, ascii_icon)
+            ("lock",      "\u{f033e}", "Lock",      "\u{1f512}"),
+            ("sleep",     "\u{f0904}", "Sleep",     "\u{1f4a4}"),
+            ("hibernate", "\u{f04b2}", "Hibernate", "\u{1f319}"),
+            ("logout",    "\u{f05fd}", "Log Out",   "\u{1f6aa}"),
+            ("reboot",    "\u{f0453}", "Reboot",    "\u{1f504}"),
+            ("shutdown",  "\u{f0425}", "Shutdown",  "\u{23fb}"),
+        ];
+
+        let cards: Vec<Element<'_, Message>> = self.actions
             .iter()
-            .map(|(icon, label, action)| {
-                let action = *action;
-                let icon_txt = text(*icon).size(40.0).color(accent);
-                let label_txt = text(*label).size(14.0).color(fg);
+            .filter_map(|action_key| {
+                let info = all_action_info.iter().find(|(k, ..)| *k == action_key.as_str())?;
+                let (key, nerd_icon, label, ascii_icon) = info;
+                let icon  = if use_nerd { *nerd_icon } else { *ascii_icon };
+                let key   = key.to_string();
+                let a_col = Color { a: accent.a * prog, ..accent };
+                let f_col = Color { a: fg.a * prog, ..fg };
 
-                let card_content = column![icon_txt, label_txt]
-                    .spacing(10.0)
-                    .align_x(Alignment::Center);
-
-                button(
-                    container(card_content)
+                let card_content: Element<'_, Message> = match btn_style {
+                    "icon_only" => {
+                        container(
+                            text(icon).size(fsize + 18.0).color(a_col),
+                        )
+                        .width(Length::Fixed(110.0))
+                        .height(Length::Fixed(110.0))
+                        .align_x(Alignment::Center)
+                        .align_y(Alignment::Center)
+                        .into()
+                    }
+                    "pill" => {
+                        container(
+                            row![
+                                text(icon).size(fsize + 8.0).color(a_col),
+                                text(*label).size(fsize).color(f_col),
+                            ]
+                            .spacing(8.0)
+                            .align_y(Alignment::Center),
+                        )
+                        .width(Length::Fixed(140.0))
+                        .height(Length::Fixed(60.0))
+                        .align_x(Alignment::Center)
+                        .align_y(Alignment::Center)
+                        .into()
+                    }
+                    _ => { // "icon_label" (default)
+                        container(
+                            column![
+                                text(icon).size(fsize + 18.0).color(a_col),
+                                text(*label).size(fsize - 1.0).color(f_col),
+                            ]
+                            .spacing(10.0)
+                            .align_x(Alignment::Center),
+                        )
                         .width(Length::Fixed(120.0))
                         .height(Length::Fixed(130.0))
                         .align_x(Alignment::Center)
-                        .align_y(Alignment::Center),
-                )
-                .on_press(Message::Act(action))
-                .padding(0)
-                .style(move |_: &iced::Theme, status| {
-                    let bg = if status == iced::widget::button::Status::Hovered {
-                        card_hover
-                    } else {
-                        card_bg
-                    };
-                    iced::widget::button::Style {
-                        background: Some(Background::Color(bg)),
-                        border: Border {
-                            radius: 16.0.into(),
-                            color: if status == iced::widget::button::Status::Hovered {
-                                accent
-                            } else {
-                                Color::from_rgba8(0x45, 0x47, 0x5a, 0.60)
-                            },
-                            width: 1.5,
-                        },
-                        text_color: fg,
-                        ..Default::default()
+                        .align_y(Alignment::Center)
+                        .into()
                     }
-                })
-                .into()
+                };
+
+                Some(
+                    button(card_content)
+                        .on_press(Message::Act(key))
+                        .padding(0)
+                        .style(move |_: &iced::Theme, status| {
+                            let bg = if status == iced::widget::button::Status::Hovered
+                                || status == iced::widget::button::Status::Pressed
+                            {
+                                card_hover
+                            } else {
+                                card_bg
+                            };
+                            let border_col = if status == iced::widget::button::Status::Hovered
+                                || status == iced::widget::button::Status::Pressed
+                            {
+                                Color { a: accent.a * prog, ..accent }
+                            } else {
+                                Color::from_rgba(0.27, 0.28, 0.35, 0.6 * prog)
+                            };
+                            iced::widget::button::Style {
+                                background: Some(Background::Color(bg)),
+                                border: Border {
+                                    radius: 16.0.into(),
+                                    color: border_col,
+                                    width: 1.5,
+                                },
+                                text_color: fg,
+                                ..Default::default()
+                            }
+                        })
+                        .into(),
+                )
             })
             .collect();
 
-        let card_row = row(cards).spacing(20.0).align_y(Alignment::Center);
+        let card_row = iced::widget::Row::from_vec(cards)
+            .spacing(20.0)
+            .align_y(Alignment::Center);
 
-        let hint = text("Esc to cancel")
-            .size(12.0)
-            .color(Color::from_rgba8(0x9f, 0xa2, 0xb5, 0.7));
+        let hint_col = Color::from_rgba(0.62, 0.64, 0.71, 0.7 * prog);
+        let hint = text("Esc to cancel").size(fsize - 3.0).color(hint_col);
 
         let center_panel = column![card_row, hint]
             .spacing(20.0)
             .align_x(Alignment::Center);
 
-        // Wrap in a mouse_area so clicking the dark background dismisses.
+        // Dim background with fade-in.
+        let overlay_bg = Color::from_rgba(0.0, 0.0, 0.0, 0.55 * prog);
+
         mouse_area(
             container(center_panel)
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .align_x(Alignment::Center)
-                .align_y(Alignment::Center),
+                .align_y(Alignment::Center)
+                .style(move |_: &iced::Theme| iced::widget::container::Style {
+                    background: Some(Background::Color(overlay_bg)),
+                    ..Default::default()
+                }),
         )
         .on_press(Message::Dismiss)
         .into()
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        iced::keyboard::listen().map(Message::KeyEvent)
+        let now = Instant::now();
+        let mut subs = vec![iced::keyboard::listen().map(Message::KeyEvent)];
+        if self.enter_anim.is_animating(now) {
+            subs.push(
+                iced::time::every(Duration::from_millis(16)).map(|_| Message::AnimFrame),
+            );
+        }
+        Subscription::batch(subs)
     }
 
     fn style(&self, _theme: &iced::Theme) -> iced::theme::Style {
         iced::theme::Style {
-            // Transparent surface — the dark overlay is drawn by the container.
             background_color: Color::TRANSPARENT,
             text_color: self.theme.foreground.to_iced(),
         }
+    }
+}
+
+// ── Power action execution ─────────────────────────────────────────────────────
+
+fn execute_power_action(action: String, lock_cmd: String) {
+    let cmd_str: &str = match action.as_str() {
+        "lock"      => &lock_cmd,
+        "sleep"     => "systemctl suspend",
+        "hibernate" => "systemctl hibernate",
+        "logout"    => "hyprctl dispatch exit",
+        "reboot"    => "systemctl reboot",
+        "shutdown"  => "systemctl poweroff",
+        _           => return,
+    };
+    let mut parts = cmd_str.split_whitespace();
+    if let Some(prog) = parts.next() {
+        let _ = std::process::Command::new(prog).args(parts).spawn();
     }
 }

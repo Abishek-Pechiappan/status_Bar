@@ -63,6 +63,18 @@ pub struct GlobalConfig {
     pub auto_hide: bool,
     /// Milliseconds of cursor-absence before the bar hides.  Default: 1000.
     pub auto_hide_delay_ms: u32,
+    /// How the power menu opens.
+    /// `"dropdown"` — panel drops below the bar (default).
+    /// `"inline"`   — power actions replace the bar row in-place.
+    /// `"overlay"`  — spawns the separate `bar-powermenu` fullscreen overlay.
+    pub power_menu_style: String,
+    /// Animation style for the power panel.
+    /// `"slide"` (default), `"fade"`, `"scale"`, or `"none"`.
+    pub power_anim_style: String,
+    /// Ordered list of enabled power actions.
+    /// Possible values: `"lock"`, `"sleep"`, `"hibernate"`, `"logout"`, `"reboot"`, `"shutdown"`.
+    #[serde(default = "default_power_actions")]
+    pub power_actions: Vec<String>,
 }
 
 impl Default for GlobalConfig {
@@ -79,8 +91,16 @@ impl Default for GlobalConfig {
             system_poll_secs: 2,
             auto_hide:          false,
             auto_hide_delay_ms: 1000,
+            power_menu_style:   "dropdown".to_string(),
+            power_anim_style:   "slide".to_string(),
+            power_actions:      default_power_actions(),
         }
     }
+}
+
+fn default_power_actions() -> Vec<String> {
+    ["lock", "sleep", "hibernate", "logout", "reboot", "shutdown"]
+        .iter().map(|s| s.to_string()).collect()
 }
 
 /// Bar position on screen.
@@ -186,6 +206,11 @@ pub struct ThemeConfig {
     pub battery_warn_percent: u8,
     /// Show tiny window-count dots below each workspace indicator.
     pub workspace_show_counts: bool,
+    /// Visual style for power menu action buttons.
+    /// `"icon_label"` (default) — icon stacked above text.
+    /// `"icon_only"` — icon only; label slides in on hover.
+    /// `"pill"` — icon + label side-by-side in a rounded pill.
+    pub power_button_style: String,
 }
 
 impl Default for ThemeConfig {
@@ -217,6 +242,7 @@ impl Default for ThemeConfig {
             clock_show_seconds:     false,
             battery_warn_percent:   20,
             workspace_show_counts:  false,
+            power_button_style:     "icon_label".to_string(),
         }
     }
 }

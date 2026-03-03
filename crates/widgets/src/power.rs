@@ -2,10 +2,10 @@ use bar_core::{event::Message, state::AppState};
 use bar_theme::Theme;
 use iced::{widget::button, widget::text, Element};
 
-/// A clickable power icon in the bar that opens the power menu overlay.
+/// A clickable power icon that opens the power panel.
 ///
-/// Clicking sends `Message::PowerMenuOpen` which the bar handles by spawning
-/// the `bar-powermenu` process.
+/// Sends `Message::PowerPanelToggle`; the bar decides the display style based
+/// on `config.global.power_menu_style` ("dropdown", "inline", or "overlay").
 #[derive(Debug, Default)]
 pub struct PowerWidget;
 
@@ -14,12 +14,16 @@ impl PowerWidget {
         Self
     }
 
-    pub fn view<'a>(&'a self, _state: &'a AppState, theme: &'a Theme) -> Element<'a, Message> {
+    pub fn view<'a>(&'a self, state: &'a AppState, theme: &'a Theme) -> Element<'a, Message> {
         let icon = if theme.use_nerd_icons { "󰤆" } else { "⏻" };
-        let fg   = theme.foreground.to_iced();
+        let col = if state.power_panel_open {
+            theme.accent.to_iced()
+        } else {
+            theme.foreground.to_iced()
+        };
 
-        button(text(icon).size(theme.font_size).color(fg))
-            .on_press(Message::PowerMenuOpen)
+        button(text(icon).size(theme.font_size).color(col))
+            .on_press(Message::PowerPanelToggle)
             .padding(0)
             .style(iced::widget::button::text)
             .into()

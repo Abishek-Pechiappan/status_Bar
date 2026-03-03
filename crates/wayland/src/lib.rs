@@ -24,6 +24,7 @@ use bar_widgets::{
 use chrono::Local;
 use futures::channel::mpsc::Sender;
 use iced::{
+    animation::{Animation, Easing},
     widget::{column, container, row},
     Element, Length, Subscription, Task,
 };
@@ -44,6 +45,10 @@ const DEFAULT_SYSTEM_INTERVAL_MS: u64 = 2_000;
 const NOTIFY_PANEL_HEIGHT: u32 = 300;
 /// Height of the calendar panel that drops below the bar (pixels).
 const CALENDAR_PANEL_HEIGHT: u32 = 220;
+/// Height of the power panel that drops below the bar (pixels).
+const POWER_PANEL_HEIGHT: u32 = 120;
+/// Maximum number of power action buttons (lock/sleep/hibernate/logout/reboot/shutdown).
+const MAX_POWER_ACTIONS: usize = 6;
 
 /// Custom shell command set once from config at startup.
 static CUSTOM_CMD: OnceLock<String> = OnceLock::new();
@@ -158,6 +163,13 @@ struct Bar {
     net_tx_history: std::collections::VecDeque<f32>,
     // Whether the calendar panel is currently open
     calendar_open: bool,
+    // ── Power panel ───────────────────────────────────────────────────────────
+    /// Whether inline power mode is active (power buttons replace bar content).
+    power_inline_open: bool,
+    /// Smooth animation driving the power panel open/close transition.
+    power_anim: Animation<bool>,
+    /// Per-button hover animations (one per power action slot, max 6).
+    power_hover_anim: [Animation<bool>; MAX_POWER_ACTIONS],
     // ── Auto-hide ─────────────────────────────────────────────────────────────
     /// `true` = bar at full height; `false` = collapsed to 1 px strip.
     bar_visible: bool,
@@ -206,7 +218,12 @@ impl Bar {
             cpu_history:    std::collections::VecDeque::with_capacity(20),
             net_rx_history: std::collections::VecDeque::with_capacity(20),
             net_tx_history: std::collections::VecDeque::with_capacity(20),
-            calendar_open: false,
+            calendar_open:     false,
+            power_inline_open: false,
+            power_anim:        Animation::new(false).slow().easing(Easing::EaseOutCubic),
+            power_hover_anim:  std::array::from_fn(|_| {
+                Animation::new(false).very_quick().easing(Easing::EaseOutQuad)
+            }),
             bar_visible:  true,
             hide_after:   None,
         };
@@ -476,11 +493,77 @@ impl Bar {
                 );
             }
 
-            // ── Power menu ────────────────────────────────────────────────────
+            // ── Power menu (legacy overlay — no longer sent by widget) ────────
             AppMessage::PowerMenuOpen => {
                 tokio::spawn(async {
                     let _ = tokio::process::Command::new("bar-powermenu").spawn();
                 });
+            }
+
+            // ── Power panel ───────────────────────────────────────────────────
+            AppMessage::PowerPanelToggle => {
+                let now = std::time::Instant::now();
+                // Close other panels first.
+                self.state.notify_panel_open = false;
+                self.calendar_open = false;
+
+                match self.config.global.power_menu_style.as_str() {
+                    "overlay" => {
+                        tokio::spawn(async {
+                            let _ = tokio::process::Command::new("bar-powermenu").spawn();
+                        });
+                    }
+                    "inline" => {
+                        self.power_inline_open = !self.power_inline_open;
+                        self.state.power_panel_open = self.power_inline_open;
+                        if self.config.global.power_anim_style != "none" {
+                            self.power_anim.go_mut(self.power_inline_open, now);
+                        }
+                    }
+                    _ => {
+                        // "dropdown" (default)
+                        self.state.power_panel_open = !self.state.power_panel_open;
+                        if self.config.global.power_anim_style != "none" {
+                            self.power_anim.go_mut(self.state.power_panel_open, now);
+                        }
+                        return self.sync_surface_size();
+                    }
+                }
+            }
+            AppMessage::PowerActionTriggered(action) => {
+                let was_open = self.state.power_panel_open;
+                self.state.power_panel_open = false;
+                self.power_inline_open = false;
+                let now = std::time::Instant::now();
+                self.power_anim.go_mut(false, now);
+                let lock_cmd = self.config.global.lock_command.clone();
+                let task = Task::perform(
+                    async move { execute_power_action(action, lock_cmd).await },
+                    |_| Message::Tick,
+                );
+                if was_open {
+                    return Task::batch([self.sync_surface_size(), task]);
+                }
+                return task;
+            }
+            AppMessage::PowerHoverEnter(i) => {
+                if i < MAX_POWER_ACTIONS {
+                    self.power_hover_anim[i].go_mut(true, std::time::Instant::now());
+                }
+            }
+            AppMessage::PowerHoverExit(i) => {
+                if i < MAX_POWER_ACTIONS {
+                    self.power_hover_anim[i].go_mut(false, std::time::Instant::now());
+                }
+            }
+            AppMessage::PowerAnimFrame => {
+                // For dropdown + slide: progressively update surface size each frame.
+                if self.config.global.power_menu_style == "dropdown"
+                    && self.config.global.power_anim_style == "slide"
+                {
+                    return self.sync_surface_size();
+                }
+                // Other animation styles just need a redraw (view() is called automatically).
             }
 
             // ── Tray / window list ────────────────────────────────────────────
@@ -529,12 +612,12 @@ impl Bar {
                 }
             }
             AppMessage::BarMouseLeave => {
-                // Only start the hide countdown when no panel is open (the
-                // mouse_area covers bar + panel, so leaving the panel also
-                // fires this; but we don't want to hide while panel is visible).
+                // Only start the hide countdown when no panel is open.
                 if self.config.global.auto_hide
                     && !self.state.notify_panel_open
                     && !self.calendar_open
+                    && !self.state.power_panel_open
+                    && !self.power_inline_open
                 {
                     self.hide_after = Some(std::time::Instant::now());
                 }
@@ -549,6 +632,8 @@ impl Bar {
                             && self.bar_visible
                             && !self.state.notify_panel_open
                             && !self.calendar_open
+                            && !self.state.power_panel_open
+                            && !self.power_inline_open
                         {
                             self.bar_visible = false;
                             self.hide_after = None;
@@ -601,83 +686,80 @@ impl Bar {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let gap          = self.theme.gap as f32;
-        let pad          = self.theme.padding;
-        let radius       = self.theme.border_radius;
-        let wbg          = self.theme.widget_bg;
-        let pad_x        = self.theme.widget_pad_x;
-        let pad_y        = self.theme.widget_pad_y;
-        let wborder_w    = self.theme.widget_border_width;
-        let wborder_c    = self.theme.widget_border_color;
-
-        let left_items: Vec<Element<'_, Message>> = self.config.left
-            .iter()
-            .filter_map(|w| {
-                self.render_widget(&w.kind)
-                    .map(|e| pill_wrap(e.map(Message::App), radius, wbg, pad_x, pad_y, wborder_w, wborder_c))
-            })
-            .collect();
-        let left = iced::widget::Row::from_vec(left_items)
-            .spacing(gap)
-            .align_y(iced::Alignment::Center);
-
-        let center_items: Vec<Element<'_, Message>> = self.config.center
-            .iter()
-            .filter_map(|w| {
-                self.render_widget(&w.kind)
-                    .map(|e| pill_wrap(e.map(Message::App), radius, wbg, pad_x, pad_y, wborder_w, wborder_c))
-            })
-            .collect();
-        let center = iced::widget::Row::from_vec(center_items)
-            .spacing(gap)
-            .align_y(iced::Alignment::Center);
-
-        let right_items: Vec<Element<'_, Message>> = self.config.right
-            .iter()
-            .filter_map(|w| {
-                self.render_widget(&w.kind)
-                    .map(|e| pill_wrap(e.map(Message::App), radius, wbg, pad_x, pad_y, wborder_w, wborder_c))
-            })
-            .collect();
-        let right = iced::widget::Row::from_vec(right_items)
-            .spacing(gap)
-            .align_y(iced::Alignment::Center);
-
-        let hpad = [0.0f32, pad as f32];
-
-        let bar = row![
-            container(left)
-                .width(Length::FillPortion(2))
-                .height(Length::Fill)
-                .align_y(iced::Alignment::Center)
-                .padding(hpad),
-            container(center)
-                .center_x(Length::FillPortion(1))
-                .height(Length::Fill)
-                .align_y(iced::Alignment::Center)
-                .padding(hpad),
-            container(right)
-                .align_right(Length::FillPortion(2))
-                .height(Length::Fill)
-                .align_y(iced::Alignment::Center)
-                .padding(hpad),
-        ]
-        .width(Length::Fill)
-        .height(Length::Fill);
-
+        let now          = std::time::Instant::now();
+        let power_style  = self.config.global.power_menu_style.as_str();
         let border_color = self.theme.border_color.to_iced();
         let border_width = self.theme.border_width as f32;
         let bar_h        = self.config.global.height as f32;
-        // Apply the background color (with opacity) at the container level, not the
-        // surface level.  This lets Wayland/Hyprland composite the wallpaper correctly
-        // through the transparent parts of the surface.
-        // When bar_bg is None (background left empty in config) the bar is fully
-        // transparent — the wallpaper/blur shows through.
-        let opacity = self.config.global.opacity;
-        let bar_bg_iced = self.theme.bar_bg
+        let opacity      = self.config.global.opacity;
+        let bar_bg_iced  = self.theme.bar_bg
             .map(|c| iced::Background::Color(c.with_alpha(opacity).to_iced()));
 
-        let bar_outer: Element<'_, Message> = container(bar)
+        // ── Auto-hide: 1 px strip ──────────────────────────────────────────────
+        if self.config.global.auto_hide && !self.bar_visible {
+            return iced::widget::mouse_area(
+                container(iced::widget::Space::new())
+                    .width(Length::Fill)
+                    .height(Length::Fixed(1.0)),
+            )
+            .on_enter(Message::App(AppMessage::BarMouseEnter))
+            .into();
+        }
+
+        // ── Bar inner content ─────────────────────────────────────────────────
+        // Inline power mode replaces the widget row with power action buttons.
+        let power_inline_active = power_style == "inline"
+            && (self.power_inline_open || self.power_anim.is_animating(now));
+
+        let bar_inner: Element<'_, Message> = if power_inline_active {
+            self.view_power_inline()
+        } else {
+            let gap       = self.theme.gap as f32;
+            let pad       = self.theme.padding;
+            let radius    = self.theme.border_radius;
+            let wbg       = self.theme.widget_bg;
+            let pad_x     = self.theme.widget_pad_x;
+            let pad_y     = self.theme.widget_pad_y;
+            let wborder_w = self.theme.widget_border_width;
+            let wborder_c = self.theme.widget_border_color;
+            let hpad      = [0.0f32, pad as f32];
+
+            let left_items: Vec<Element<'_, Message>> = self.config.left
+                .iter()
+                .filter_map(|w| {
+                    self.render_widget(&w.kind)
+                        .map(|e| pill_wrap(e.map(Message::App), radius, wbg, pad_x, pad_y, wborder_w, wborder_c))
+                })
+                .collect();
+            let center_items: Vec<Element<'_, Message>> = self.config.center
+                .iter()
+                .filter_map(|w| {
+                    self.render_widget(&w.kind)
+                        .map(|e| pill_wrap(e.map(Message::App), radius, wbg, pad_x, pad_y, wborder_w, wborder_c))
+                })
+                .collect();
+            let right_items: Vec<Element<'_, Message>> = self.config.right
+                .iter()
+                .filter_map(|w| {
+                    self.render_widget(&w.kind)
+                        .map(|e| pill_wrap(e.map(Message::App), radius, wbg, pad_x, pad_y, wborder_w, wborder_c))
+                })
+                .collect();
+
+            row![
+                container(iced::widget::Row::from_vec(left_items).spacing(gap).align_y(iced::Alignment::Center))
+                    .width(Length::FillPortion(2)).height(Length::Fill).align_y(iced::Alignment::Center).padding(hpad),
+                container(iced::widget::Row::from_vec(center_items).spacing(gap).align_y(iced::Alignment::Center))
+                    .center_x(Length::FillPortion(1)).height(Length::Fill).align_y(iced::Alignment::Center).padding(hpad),
+                container(iced::widget::Row::from_vec(right_items).spacing(gap).align_y(iced::Alignment::Center))
+                    .align_right(Length::FillPortion(2)).height(Length::Fill).align_y(iced::Alignment::Center).padding(hpad),
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+        };
+
+        let bar_outer: Element<'_, Message> = container(bar_inner)
             .width(Length::Fill)
             .height(Length::Fixed(bar_h))
             .style(move |_: &iced::Theme| iced::widget::container::Style {
@@ -691,25 +773,20 @@ impl Bar {
             })
             .into();
 
-        // ── Auto-hide: when collapsed show a 1 px invisible strip that
-        //    re-expands the bar when the cursor enters it.
-        if self.config.global.auto_hide && !self.bar_visible {
-            return iced::widget::mouse_area(
-                container(iced::widget::Space::new())
-                    .width(Length::Fill)
-                    .height(Length::Fixed(1.0)),
-            )
-            .on_enter(Message::App(AppMessage::BarMouseEnter))
-            .into();
-        }
+        // ── Panel selection (dropdown panels below the bar) ───────────────────
+        let power_dropdown_active = power_style == "dropdown"
+            && (self.state.power_panel_open || self.power_anim.is_animating(now));
 
-        // Build the full visible content (bar + optional drop-down panel).
         let content: Element<'_, Message> = if self.state.notify_panel_open {
             column![bar_outer, self.view_notify_panel()]
                 .width(Length::Fill)
                 .into()
         } else if self.calendar_open {
             column![bar_outer, self.view_calendar_panel()]
+                .width(Length::Fill)
+                .into()
+        } else if power_dropdown_active {
+            column![bar_outer, self.view_power_panel()]
                 .width(Length::Fill)
                 .into()
         } else {
@@ -960,6 +1037,304 @@ impl Bar {
         .into()
     }
 
+    fn view_power_panel(&self) -> Element<'_, Message> {
+        let now        = std::time::Instant::now();
+        let fsize      = self.theme.font_size;
+        let fg         = self.theme.foreground.to_iced();
+        let accent     = self.theme.accent.to_iced();
+        let use_nerd   = self.theme.use_nerd_icons;
+        let btn_style  = self.theme.power_button_style.as_str();
+        let anim_style = self.config.global.power_anim_style.as_str();
+
+        // Panel background — same blend as notify/calendar panels.
+        let bg  = self.theme.background;
+        let fgc = self.theme.foreground;
+        let mix = 0.12_f32;
+        let panel_bg = ThemeColor {
+            r: (bg.r + (fgc.r - bg.r) * mix).clamp(0.0, 1.0),
+            g: (bg.g + (fgc.g - bg.g) * mix).clamp(0.0, 1.0),
+            b: (bg.b + (fgc.b - bg.b) * mix).clamp(0.0, 1.0),
+            a: 0.98,
+        };
+        let bg_iced = panel_bg.to_iced();
+
+        // Animation progress (0.0 = closed → 1.0 = fully open).
+        let prog = if anim_style != "none" {
+            self.power_anim.interpolate(0.0f32, 1.0f32, now)
+        } else {
+            1.0f32
+        };
+
+        // Slide: animate the container height.
+        let panel_h = if anim_style == "slide" {
+            (POWER_PANEL_HEIGHT as f32 * prog).max(0.0)
+        } else {
+            POWER_PANEL_HEIGHT as f32
+        };
+
+        // Fade: modulate alpha on all colors.
+        let fade_alpha = if anim_style == "fade" { prog } else { 1.0f32 };
+
+        // Scale: button padding shrinks from zero to full.
+        let (pad_v, pad_h) = if anim_style == "scale" {
+            (2.0 + 6.0 * prog, 6.0 + 8.0 * prog)
+        } else {
+            (8.0f32, 14.0f32)
+        };
+
+        let all_actions = ["lock", "sleep", "hibernate", "logout", "reboot", "shutdown"];
+
+        let buttons: Vec<Element<'_, Message>> = self.config.global.power_actions
+            .iter()
+            .filter_map(|action| {
+                let anim_idx = all_actions
+                    .iter()
+                    .position(|&a| a == action.as_str())
+                    .unwrap_or(0);
+                let hover_prog =
+                    self.power_hover_anim[anim_idx].interpolate(0.0f32, 1.0f32, now);
+
+                let (nerd_icon, label, ascii_icon) = power_action_info(action.as_str());
+                let icon = if use_nerd { nerd_icon } else { ascii_icon };
+
+                // Border interpolates foreground → accent on hover.
+                let border_col = iced::Color {
+                    r: fg.r + (accent.r - fg.r) * hover_prog,
+                    g: fg.g + (accent.g - fg.g) * hover_prog,
+                    b: fg.b + (accent.b - fg.b) * hover_prog,
+                    a: fg.a * fade_alpha,
+                };
+                let text_col   = iced::Color { a: fg.a * fade_alpha, ..fg };
+                let accent_col = iced::Color { a: accent.a * fade_alpha, ..accent };
+
+                let btn_content: Element<'_, Message> = match btn_style {
+                    "icon_only" => {
+                        iced::widget::text(icon)
+                            .size(fsize + 4.0)
+                            .color(text_col)
+                            .into()
+                    }
+                    "pill" => row![
+                        iced::widget::text(icon).size(fsize + 2.0).color(text_col),
+                        iced::widget::text(label).size(fsize - 1.0).color(text_col),
+                    ]
+                    .spacing(6.0)
+                    .align_y(iced::Alignment::Center)
+                    .into(),
+                    _ => iced::widget::column![ // "icon_label" (default)
+                        iced::widget::text(icon).size(fsize + 6.0).color(accent_col),
+                        iced::widget::text(label).size(fsize - 2.0).color(text_col),
+                    ]
+                    .spacing(4.0)
+                    .align_x(iced::Alignment::Center)
+                    .into(),
+                };
+
+                let action_key = action.clone();
+                let btn: Element<'_, Message> = iced::widget::button(btn_content)
+                    .on_press(Message::App(AppMessage::PowerActionTriggered(action_key)))
+                    .padding([pad_v, pad_h])
+                    .style(move |_: &iced::Theme, status| {
+                        let hovered = status == iced::widget::button::Status::Hovered
+                            || status == iced::widget::button::Status::Pressed;
+                        iced::widget::button::Style {
+                            background: hovered.then_some(iced::Background::Color(
+                                iced::Color { a: 0.08 * fade_alpha, ..accent }
+                            )),
+                            border: iced::Border {
+                                color: border_col,
+                                width: 1.5,
+                                radius: 8.0.into(),
+                            },
+                            text_color: text_col,
+                            ..Default::default()
+                        }
+                    })
+                    .into();
+
+                Some(
+                    iced::widget::mouse_area(btn)
+                        .on_enter(Message::App(AppMessage::PowerHoverEnter(anim_idx)))
+                        .on_exit(Message::App(AppMessage::PowerHoverExit(anim_idx)))
+                        .into(),
+                )
+            })
+            .collect();
+
+        let top_border: Element<'_, Message> = container(iced::widget::Space::new())
+            .width(Length::Fill)
+            .height(Length::Fixed(2.0))
+            .style(move |_: &iced::Theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(
+                    iced::Color { a: accent.a * fade_alpha, ..accent },
+                )),
+                ..Default::default()
+            })
+            .into();
+
+        let hint_col = self.theme.foreground.with_alpha(0.35 * fade_alpha).to_iced();
+        let hint: Element<'_, Message> = container(
+            iced::widget::text("Select an action  •  Esc to close")
+                .size(fsize - 3.0)
+                .color(hint_col),
+        )
+        .width(Length::Fill)
+        .center_x(Length::Fill)
+        .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 4.0, left: 0.0 })
+        .into();
+
+        let buttons_row: Element<'_, Message> =
+            container(
+                iced::widget::Row::from_vec(buttons)
+                    .spacing(12.0)
+                    .align_y(iced::Alignment::Center),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .align_y(iced::Alignment::Center)
+            .padding([8.0, 16.0])
+            .into();
+
+        let inner = iced::widget::column![top_border, buttons_row, hint].width(Length::Fill);
+
+        container(inner)
+            .width(Length::Fill)
+            .height(Length::Fixed(panel_h))
+            .clip(true)
+            .style(move |_: &iced::Theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(
+                    iced::Color { a: bg_iced.a * fade_alpha, ..bg_iced },
+                )),
+                ..Default::default()
+            })
+            .into()
+    }
+
+    fn view_power_inline(&self) -> Element<'_, Message> {
+        let now        = std::time::Instant::now();
+        let fsize      = self.theme.font_size;
+        let fg         = self.theme.foreground.to_iced();
+        let accent     = self.theme.accent.to_iced();
+        let dim        = self.theme.foreground.with_alpha(0.5).to_iced();
+        let use_nerd   = self.theme.use_nerd_icons;
+        let btn_style  = self.theme.power_button_style.as_str();
+        let anim_style = self.config.global.power_anim_style.as_str();
+
+        // Animation progress (0 = hidden, 1 = fully visible).
+        let prog = if anim_style != "none" {
+            self.power_anim.interpolate(0.0f32, 1.0f32, now)
+        } else {
+            1.0f32
+        };
+
+        let fade_alpha = if anim_style == "fade" { prog } else { 1.0f32 };
+
+        // Scale: button padding grows into view.
+        let (pad_v, pad_h) = if anim_style == "scale" {
+            (1.0 + 3.0 * prog, 4.0 + 6.0 * prog)
+        } else {
+            (4.0f32, 10.0f32)
+        };
+
+        let all_actions = ["lock", "sleep", "hibernate", "logout", "reboot", "shutdown"];
+
+        let buttons: Vec<Element<'_, Message>> = self.config.global.power_actions
+            .iter()
+            .filter_map(|action| {
+                let anim_idx = all_actions
+                    .iter()
+                    .position(|&a| a == action.as_str())
+                    .unwrap_or(0);
+                let hover_prog =
+                    self.power_hover_anim[anim_idx].interpolate(0.0f32, 1.0f32, now);
+
+                let (nerd_icon, label, ascii_icon) = power_action_info(action.as_str());
+                let icon = if use_nerd { nerd_icon } else { ascii_icon };
+
+                let text_col  = iced::Color { a: fg.a * fade_alpha, ..fg };
+                let border_col = iced::Color {
+                    r: fg.r + (accent.r - fg.r) * hover_prog,
+                    g: fg.g + (accent.g - fg.g) * hover_prog,
+                    b: fg.b + (accent.b - fg.b) * hover_prog,
+                    a: fade_alpha,
+                };
+
+                let btn_content: Element<'_, Message> = match btn_style {
+                    "pill" | "icon_label" => row![
+                        iced::widget::text(icon).size(fsize).color(text_col),
+                        iced::widget::text(label).size(fsize - 2.0).color(text_col),
+                    ]
+                    .spacing(5.0)
+                    .align_y(iced::Alignment::Center)
+                    .into(),
+                    _ => iced::widget::text(icon).size(fsize).color(text_col).into(),
+                };
+
+                let action_key = action.clone();
+                let btn: Element<'_, Message> = iced::widget::button(btn_content)
+                    .on_press(Message::App(AppMessage::PowerActionTriggered(action_key)))
+                    .padding([pad_v, pad_h])
+                    .style(move |_: &iced::Theme, _| iced::widget::button::Style {
+                        background: None,
+                        border: iced::Border {
+                            color: border_col,
+                            width: 1.0,
+                            radius: 6.0.into(),
+                        },
+                        text_color: text_col,
+                        ..Default::default()
+                    })
+                    .into();
+
+                Some(
+                    iced::widget::mouse_area(btn)
+                        .on_enter(Message::App(AppMessage::PowerHoverEnter(anim_idx)))
+                        .on_exit(Message::App(AppMessage::PowerHoverExit(anim_idx)))
+                        .into(),
+                )
+            })
+            .collect();
+
+        // Cancel / close button on the right.
+        let cancel_icon = if use_nerd { "󰅖" } else { "x" };
+        let cancel_col  = iced::Color { a: dim.a * fade_alpha, ..dim };
+        let cancel_btn: Element<'_, Message> = iced::widget::button(
+            iced::widget::text(cancel_icon).size(fsize).color(cancel_col),
+        )
+        .on_press(Message::App(AppMessage::PowerPanelToggle))
+        .padding([4.0, 8.0])
+        .style(move |_: &iced::Theme, _| iced::widget::button::Style {
+            background: None,
+            text_color: cancel_col,
+            ..Default::default()
+        })
+        .into();
+
+        // Slide: leading spacer shrinks so buttons appear to fly in from the right.
+        let slide_lead = if anim_style == "slide" {
+            ((1.0 - prog) * 120.0).max(0.0)
+        } else {
+            0.0f32
+        };
+
+        let buttons_row = iced::widget::Row::from_vec(buttons)
+            .spacing(8.0)
+            .align_y(iced::Alignment::Center);
+
+        row![
+            iced::widget::Space::new().width(Length::Fixed(12.0 + slide_lead)),
+            buttons_row,
+            iced::widget::Space::new().width(Length::Fill),
+            cancel_btn,
+            iced::widget::Space::new().width(Length::Fixed(8.0)),
+        ]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .align_y(iced::Alignment::Center)
+        .into()
+    }
+
     // ── Subscriptions ─────────────────────────────────────────────────────────
 
     fn subscription(&self) -> Subscription<Message> {
@@ -980,6 +1355,17 @@ impl Bar {
             subs.push(
                 iced::time::every(Duration::from_millis(200))
                     .map(|_| Message::App(AppMessage::AutoHideTick)),
+            );
+        }
+
+        // 60 fps animation tick — only active while a power panel animation plays.
+        let now = std::time::Instant::now();
+        let power_animating = self.power_anim.is_animating(now)
+            || self.power_hover_anim.iter().any(|a| a.is_animating(now));
+        if power_animating {
+            subs.push(
+                iced::time::every(Duration::from_millis(16))
+                    .map(|_| Message::App(AppMessage::PowerAnimFrame)),
             );
         }
 
@@ -1006,11 +1392,24 @@ impl Bar {
         if self.config.global.auto_hide && !self.bar_visible {
             return Task::done(Message::SizeChange((0, 1)));
         }
-        let bar_h   = self.config.global.height;
+        let bar_h = self.config.global.height;
+        let now   = std::time::Instant::now();
+
         let panel_h = if self.state.notify_panel_open {
             NOTIFY_PANEL_HEIGHT
         } else if self.calendar_open {
             CALENDAR_PANEL_HEIGHT
+        } else if self.config.global.power_menu_style == "dropdown"
+            && (self.state.power_panel_open || self.power_anim.is_animating(now))
+        {
+            match self.config.global.power_anim_style.as_str() {
+                "slide" => {
+                    // Animate panel height during slide.
+                    let prog = self.power_anim.interpolate(0.0f32, 1.0f32, now);
+                    (POWER_PANEL_HEIGHT as f32 * prog).round() as u32
+                }
+                _ => POWER_PANEL_HEIGHT, // full height for fade/scale/none
+            }
         } else {
             0
         };
@@ -1024,6 +1423,38 @@ impl Bar {
             return self.sync_surface_size();
         }
         Task::none()
+    }
+}
+
+// ── Power helpers ─────────────────────────────────────────────────────────────
+
+/// Returns `(nerd_icon, label, ascii_fallback)` for a power action key.
+fn power_action_info(action: &str) -> (&'static str, &'static str, &'static str) {
+    match action {
+        "lock"      => ("\u{f033e}", "Lock",      "\u{1f512}"),
+        "sleep"     => ("\u{f0904}", "Sleep",     "\u{1f4a4}"),
+        "hibernate" => ("\u{f04b2}", "Hibernate", "\u{1f319}"),
+        "logout"    => ("\u{f05fd}", "Log Out",   "\u{1f6aa}"),
+        "reboot"    => ("\u{f0453}", "Reboot",    "\u{1f504}"),
+        "shutdown"  => ("\u{f0425}", "Shutdown",  "\u{23fb}"),
+        _           => ("?",         "?",         "?"),
+    }
+}
+
+/// Execute a power action command in the background.
+async fn execute_power_action(action: String, lock_cmd: String) {
+    let cmd_str: &str = match action.as_str() {
+        "lock"      => &lock_cmd,
+        "sleep"     => "systemctl suspend",
+        "hibernate" => "systemctl hibernate",
+        "logout"    => "hyprctl dispatch exit",
+        "reboot"    => "systemctl reboot",
+        "shutdown"  => "systemctl poweroff",
+        _           => return,
+    };
+    let mut parts = cmd_str.split_whitespace();
+    if let Some(prog) = parts.next() {
+        let _ = tokio::process::Command::new(prog).args(parts).spawn();
     }
 }
 

@@ -64,6 +64,8 @@ pub struct Theme {
     pub battery_warn_percent: u8,
     /// Show tiny window-count dots below each workspace indicator.
     pub workspace_show_counts: bool,
+    /// Visual style for power menu buttons: `"icon_label"`, `"icon_only"`, or `"pill"`.
+    pub power_button_style: String,
 }
 
 impl Theme {
@@ -108,6 +110,7 @@ impl Theme {
             clock_show_seconds:     cfg.clock_show_seconds,
             battery_warn_percent:   cfg.battery_warn_percent,
             workspace_show_counts:  cfg.workspace_show_counts,
+            power_button_style:     cfg.power_button_style.clone(),
         }
     }
 }
