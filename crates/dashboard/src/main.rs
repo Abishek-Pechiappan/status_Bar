@@ -8,8 +8,7 @@ use bar_config::{default_path, load as load_config, schema::DashboardConfig};
 use bar_theme::Theme;
 use futures::channel::mpsc::Sender;
 use iced::{
-    animation::{Animation, Easing},
-    widget::{column, container, mouse_area, row, text},
+    widget::{column, container, row, text},
     Alignment, Background, Border, Color, Element, Length, Subscription, Task,
 };
 use iced_layershell::{
@@ -18,7 +17,7 @@ use iced_layershell::{
     settings::{LayerShellSettings, Settings},
     to_layer_message,
 };
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -241,7 +240,6 @@ struct Dashboard {
     dash_config:  DashboardConfig,
     lock_command: String,
     sys:          DashSnapshot,
-    enter_anim:   Animation<bool>,
     eq_tick:      u64,
 }
 
@@ -252,13 +250,10 @@ impl Dashboard {
         let dash_config  = config.dashboard.clone();
         let lock_command = config.global.lock_command.clone();
 
-        let mut enter_anim = Animation::new(false).slow().easing(Easing::EaseOutCubic);
-        enter_anim.go_mut(true, Instant::now());
-
         let dash = Self {
             theme, dash_config, lock_command,
             sys: DashSnapshot::default(),
-            enter_anim, eq_tick: 0,
+            eq_tick: 0,
         };
         let task = Task::perform(async { read_sys_snapshot().await }, Message::SysReady);
         (dash, task)
@@ -331,14 +326,15 @@ impl Dashboard {
     // ── View ──────────────────────────────────────────────────────────────────
 
     fn view(&self) -> Element<'_, Message> {
-        let now  = Instant::now();
-        let t    = &self.theme;
-        let prog = self.enter_anim.interpolate(0.0f32, 1.0f32, now);
-        let slide = (1.0 - prog) * 40.0;
-
-        let bg  = t.background;
-        let fgc = t.foreground;
-        let fg  = fgc.to_iced();
+        // prog is always 1.0 — no entrance fade.
+        // (Animated value caused the window to open fully transparent and
+        //  the AnimFrame ticker never started, making it invisible until the
+        //  first SysReady fired 2 s later.)
+        let prog  = 1.0f32;
+        let t     = &self.theme;
+        let bg    = t.background;
+        let fgc   = t.foreground;
+        let fg    = fgc.to_iced();
         let fsize = t.font_size;
 
         // Modal: blend 18% fg into bg → lifted look
@@ -347,10 +343,10 @@ impl Dashboard {
             (bg.r + (fgc.r - bg.r) * mix).clamp(0.0, 1.0),
             (bg.g + (fgc.g - bg.g) * mix).clamp(0.0, 1.0),
             (bg.b + (fgc.b - bg.b) * mix).clamp(0.0, 1.0),
-            0.97 * prog,
+            0.97,
         );
-        let modal_border = Color { a: 0.22 * prog, ..fg };
-        let overlay_bg   = Color::from_rgba(0.0, 0.0, 0.0, 0.72 * prog);
+        let modal_border = Color { a: 0.22, ..fg };
+        let overlay_bg   = Color::from_rgba(0.0, 0.0, 0.0, 0.72);
 
         // Build bento grid rows
         let cols = self.dash_config.columns.clamp(2, 4) as usize;
@@ -376,17 +372,35 @@ impl Dashboard {
             .spacing(gap)
             .align_x(Alignment::Center);
 
-        let hint_col = Color::from_rgba(fgc.r, fgc.g, fgc.b, 0.38 * prog);
-        let hint = text("Esc or click outside to close")
-            .size(fsize - 2.0).color(hint_col);
+        // Close button — top-right corner of the modal
+        let close_btn: Element<'_, Message> = {
+            let col = Color { a: 0.45, ..fg };
+            iced::widget::button(text("✕").size(fsize - 1.0).color(col))
+                .on_press(Message::Dismiss)
+                .padding([4, 10])
+                .style(|_: &iced::Theme, _| iced::widget::button::Style {
+                    background: None, ..Default::default()
+                })
+                .into()
+        };
+
+        let header: Element<'_, Message> = row![
+            iced::widget::Space::new().width(Length::Fill),
+            close_btn,
+        ]
+        .width(Length::Fill)
+        .into();
+
+        let hint_col = Color { a: 0.38, ..fg };
+        let hint = text("Esc to close").size(fsize - 2.0).color(hint_col);
 
         let modal = container(
-            column![grid, hint].spacing(24.0).align_x(Alignment::Center),
+            column![header, grid, hint].spacing(16.0).align_x(Alignment::Center),
         )
         .padding(iced::Padding {
-            top:    36.0,
+            top:    14.0,
             right:  48.0,
-            bottom: 36.0 + slide,
+            bottom: 36.0,
             left:   48.0,
         })
         .style(move |_: &iced::Theme| iced::widget::container::Style {
@@ -395,17 +409,17 @@ impl Dashboard {
             ..Default::default()
         });
 
-        mouse_area(
-            container(modal)
-                .width(Length::Fill).height(Length::Fill)
-                .align_x(Alignment::Center).align_y(Alignment::Center)
-                .style(move |_: &iced::Theme| iced::widget::container::Style {
-                    background: Some(Background::Color(overlay_bg)),
-                    ..Default::default()
-                }),
-        )
-        .on_press(Message::Dismiss)
-        .into()
+        // No wrapping mouse_area — the old outer mouse_area fired Dismiss for
+        // ANY click including inside the modal, making buttons/sliders unusable.
+        // Use the ✕ button or Escape to close.
+        container(modal)
+            .width(Length::Fill).height(Length::Fill)
+            .align_x(Alignment::Center).align_y(Alignment::Center)
+            .style(move |_: &iced::Theme| iced::widget::container::Style {
+                background: Some(Background::Color(overlay_bg)),
+                ..Default::default()
+            })
+            .into()
     }
 
     // ── Card builder ──────────────────────────────────────────────────────────
@@ -956,20 +970,15 @@ impl Dashboard {
     // ── Subscriptions ─────────────────────────────────────────────────────────
 
     fn subscription(&self) -> Subscription<Message> {
-        let now = Instant::now();
-        let animate = self.enter_anim.is_animating(now) || self.sys.media_playing;
-
-        let mut subs = vec![
+        // Always tick at 1 s to keep the clock current.
+        // When media is playing, upgrade to 60 fps for the equalizer animation.
+        let tick_ms = if self.sys.media_playing { 16 } else { 1000 };
+        Subscription::batch([
             iced::keyboard::listen().map(Message::KeyEvent),
             Subscription::run(sys_stream),
-        ];
-        if animate {
-            subs.push(
-                iced::time::every(Duration::from_millis(16))
-                    .map(|_| Message::AnimFrame),
-            );
-        }
-        Subscription::batch(subs)
+            iced::time::every(Duration::from_millis(tick_ms))
+                .map(|_| Message::AnimFrame),
+        ])
     }
 
     fn style(&self, _theme: &iced::Theme) -> iced::theme::Style {
