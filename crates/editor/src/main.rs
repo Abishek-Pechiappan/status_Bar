@@ -86,6 +86,7 @@ enum Section {
     Global,
     Layout,
     Theme,
+    Dashboard,
 }
 
 // ── Side of the bar ───────────────────────────────────────────────────────────
@@ -166,6 +167,8 @@ struct Editor {
     nerd_font_available: bool,
     /// Buffered text input for the lock command.
     lock_command_buf:    String,
+    /// Selected item in the dashboard "Add item" pick_list.
+    new_dash_item:       &'static str,
 }
 
 // ── Messages ──────────────────────────────────────────────────────────────────
@@ -231,6 +234,16 @@ enum Message {
     ImportWal,
     ResetDefaults,
 
+    // Dashboard bento overlay
+    DashboardEnabled(bool),
+    DashboardThemeChanged(String),
+    DashboardColumnsChanged(u8),
+    DashboardItemAdd,
+    DashboardItemRemove(usize),
+    DashboardItemMoveUp(usize),
+    DashboardItemMoveDown(usize),
+    DashboardNewItem(&'static str),
+
     // Actions
     Save,
     AutoSaveTick,
@@ -288,6 +301,7 @@ impl Editor {
                 installed_fonts:     Vec::new(),
                 nerd_font_available: false,
                 lock_command_buf,
+                new_dash_item: "notifications",
             },
             Task::perform(async { detect_installed_fonts() }, |m| m),
         )
@@ -613,6 +627,48 @@ impl Editor {
                 self.save_status = SaveStatus::Idle;
             }
 
+            // ── Dashboard bento overlay ───────────────────────────────────────
+            Message::DashboardEnabled(v) => {
+                self.config.dashboard.enabled = v;
+                self.pending_autosave = true;
+            }
+            Message::DashboardThemeChanged(t) => {
+                self.config.dashboard.theme = t;
+                self.pending_autosave = true;
+            }
+            Message::DashboardColumnsChanged(c) => {
+                self.config.dashboard.columns = c;
+                self.pending_autosave = true;
+            }
+            Message::DashboardNewItem(kind) => {
+                self.new_dash_item = kind;
+            }
+            Message::DashboardItemAdd => {
+                let kind = self.new_dash_item.to_string();
+                if !kind.is_empty() {
+                    self.config.dashboard.items.push(kind);
+                    self.pending_autosave = true;
+                }
+            }
+            Message::DashboardItemRemove(i) => {
+                if i < self.config.dashboard.items.len() {
+                    self.config.dashboard.items.remove(i);
+                    self.pending_autosave = true;
+                }
+            }
+            Message::DashboardItemMoveUp(i) => {
+                if i > 0 && i < self.config.dashboard.items.len() {
+                    self.config.dashboard.items.swap(i - 1, i);
+                    self.pending_autosave = true;
+                }
+            }
+            Message::DashboardItemMoveDown(i) => {
+                if i + 1 < self.config.dashboard.items.len() {
+                    self.config.dashboard.items.swap(i, i + 1);
+                    self.pending_autosave = true;
+                }
+            }
+
             // ── Auto-save (fires every 400 ms) ───────────────────────────────
             Message::AutoSaveTick => {
                 if self.pending_autosave {
@@ -674,9 +730,10 @@ impl Editor {
                 ]
                 .spacing(2),
                 rule::horizontal(1.0f32),
-                nav_item("  Global", Section::Global, self.section),
-                nav_item("  Layout", Section::Layout, self.section),
-                nav_item("  Theme",  Section::Theme,  self.section),
+                nav_item("  Global",    Section::Global,    self.section),
+                nav_item("  Layout",    Section::Layout,    self.section),
+                nav_item("  Theme",     Section::Theme,     self.section),
+                nav_item("  Dashboard", Section::Dashboard, self.section),
             ]
             .spacing(6)
             .padding([14, 10]),
@@ -691,9 +748,10 @@ impl Editor {
 
         // ── Content ───────────────────────────────────────────────────────────
         let body: Element<'_, Message> = match self.section {
-            Section::Global => self.view_global(),
-            Section::Layout => self.view_layout(),
-            Section::Theme  => self.view_theme(),
+            Section::Global    => self.view_global(),
+            Section::Layout    => self.view_layout(),
+            Section::Theme     => self.view_theme(),
+            Section::Dashboard => self.view_dashboard_section(),
         };
 
         let main_area: Element<'_, Message> = row![
@@ -1259,7 +1317,166 @@ impl Editor {
         .spacing(10)
         .into()
     }
+
+    // ── Dashboard bento overlay ───────────────────────────────────────────────
+
+    fn view_dashboard_section(&self) -> Element<'_, Message> {
+        let muted   = Color::from_rgb8(0x6c, 0x70, 0x86);
+        let accent  = Color::from_rgb8(0xcb, 0xa6, 0xf7);
+        let cfg     = &self.config.dashboard;
+
+        // ── Enable toggle ────────────────────────────────────────────────────
+        let enable_card: Element<'_, Message> = section_card("Bento Dashboard",
+            column![
+                labeled_row("Enable",
+                    row![
+                        toggle_chip("On",  cfg.enabled,  Message::DashboardEnabled(true)),
+                        toggle_chip("Off", !cfg.enabled, Message::DashboardEnabled(false)),
+                        text("run bar-dashboard to open overlay").size(11.0).color(muted),
+                    ].spacing(4).align_y(Alignment::Center),
+                ),
+            ]
+            .spacing(14),
+        );
+
+        // ── Theme chips ──────────────────────────────────────────────────────
+        let th = cfg.theme.as_str();
+        let theme_card: Element<'_, Message> = section_card("Visual Theme",
+            column![
+                labeled_row("Style",
+                    row![
+                        toggle_chip("Minimal", th == "minimal", Message::DashboardThemeChanged("minimal".to_string())),
+                        toggle_chip("Cards",   th == "cards",   Message::DashboardThemeChanged("cards".to_string())),
+                        toggle_chip("Full",    th == "full",    Message::DashboardThemeChanged("full".to_string())),
+                        toggle_chip("Vivid",   th == "vivid",   Message::DashboardThemeChanged("vivid".to_string())),
+                    ].spacing(4),
+                ),
+                labeled_row("Columns",
+                    row![
+                        toggle_chip("2", cfg.columns == 2, Message::DashboardColumnsChanged(2)),
+                        toggle_chip("3", cfg.columns == 3, Message::DashboardColumnsChanged(3)),
+                        toggle_chip("4", cfg.columns == 4, Message::DashboardColumnsChanged(4)),
+                        text("bento grid width").size(11.0).color(muted),
+                    ].spacing(4).align_y(Alignment::Center),
+                ),
+            ]
+            .spacing(14),
+        );
+
+        // ── Item list ────────────────────────────────────────────────────────
+        let mut item_rows: Vec<Element<'_, Message>> = cfg.items
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                let _n = cfg.items.len();
+                row![
+                    text(name).size(12.0).width(Length::Fill),
+                    button(text("↑").size(12.0))
+                        .on_press(Message::DashboardItemMoveUp(i))
+                        .padding([3, 8])
+                        .style(|_: &iced::Theme, _| iced::widget::button::Style {
+                            background: Some(iced::Background::Color(Color::from_rgba8(0x45, 0x47, 0x5a, 0.4))),
+                            border: iced::Border { radius: 4.0.into(), ..Default::default() },
+                            text_color: Color::WHITE,
+                            ..Default::default()
+                        }),
+                    button(text("↓").size(12.0))
+                        .on_press(Message::DashboardItemMoveDown(i))
+                        .padding([3, 8])
+                        .style(|_: &iced::Theme, _| iced::widget::button::Style {
+                            background: Some(iced::Background::Color(Color::from_rgba8(0x45, 0x47, 0x5a, 0.4))),
+                            border: iced::Border { radius: 4.0.into(), ..Default::default() },
+                            text_color: Color::WHITE,
+                            ..Default::default()
+                        }),
+                    button(text("×").size(13.0))
+                        .on_press(Message::DashboardItemRemove(i))
+                        .padding([3, 8])
+                        .style(|_: &iced::Theme, _| iced::widget::button::Style {
+                            background: Some(iced::Background::Color(Color::from_rgba8(0xf3, 0x8b, 0xa8, 0.18))),
+                            border: iced::Border { radius: 4.0.into(), ..Default::default() },
+                            text_color: Color::from_rgb8(0xf3, 0x8b, 0xa8),
+                            ..Default::default()
+                        }),
+                ]
+                .spacing(4)
+                .align_y(Alignment::Center)
+                .into()
+            })
+            .collect();
+
+        // Add item row
+        let add_row: Element<'_, Message> = row![
+            pick_list(
+                DASH_ITEM_CHOICES,
+                Some(self.new_dash_item),
+                |k: &'static str| Message::DashboardNewItem(k),
+            )
+            .width(Length::Fill),
+            button(
+                text("Add").size(12.0).color(accent)
+            )
+            .on_press(Message::DashboardItemAdd)
+            .padding([5, 12])
+            .style(|_: &iced::Theme, _| iced::widget::button::Style {
+                background: Some(iced::Background::Color(Color::from_rgba8(0xcb, 0xa6, 0xf7, 0.18))),
+                border: iced::Border { radius: 6.0.into(), ..Default::default() },
+                text_color: Color::from_rgb8(0xcb, 0xa6, 0xf7),
+                ..Default::default()
+            }),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center)
+        .into();
+
+        item_rows.push(add_row);
+
+        let items_card: Element<'_, Message> = section_card("Bento Items",
+            column(item_rows).spacing(8),
+        );
+
+        // ── Keybind hint ─────────────────────────────────────────────────────
+        let keybind_card: Element<'_, Message> = section_card("Hyprland Keybind",
+            column![
+                text("Add this to hyprland.conf to open the dashboard:").size(11.0).color(muted),
+                container(
+                    text("bind = SUPER, D, exec, bar-dashboard")
+                        .size(12.0)
+                        .color(Color::from_rgb8(0xa6, 0xe3, 0xa1)),
+                )
+                .padding([10, 14])
+                .width(Length::Fill)
+                .style(|_: &iced::Theme| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(Color::from_rgb8(0x11, 0x11, 0x1b))),
+                    border: iced::Border {
+                        color:  Color::from_rgb8(0x31, 0x32, 0x44),
+                        width:  1.0,
+                        radius: 6.0.into(),
+                    },
+                    ..Default::default()
+                }),
+                text("You can also run it without a keybind: bar-dashboard").size(11.0).color(muted),
+            ]
+            .spacing(8),
+        );
+
+        column![
+            enable_card,
+            theme_card,
+            items_card,
+            keybind_card,
+        ]
+        .spacing(10)
+        .into()
+    }
 }
+
+// ── Dashboard item choices ─────────────────────────────────────────────────────
+
+const DASH_ITEM_CHOICES: &[&str] = &[
+    "clock", "network", "battery", "cpu", "memory", "disk",
+    "volume", "brightness", "media", "power", "uptime", "temperature",
+];
 
 // ── Widget helpers ────────────────────────────────────────────────────────────
 

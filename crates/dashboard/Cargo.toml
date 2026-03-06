@@ -1,0 +1,19 @@
+[package]
+name             = "bar-dashboard"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "bar-dashboard"
+path = "src/main.rs"
+
+[dependencies]
+bar-config      = { workspace = true }
+bar-theme       = { workspace = true }
+iced            = { workspace = true }
+iced_layershell = { workspace = true }
+sysinfo         = { workspace = true }
+tokio           = { workspace = true }
+chrono          = { workspace = true }
+futures         = { version = "0.3" }

@@ -17,6 +17,9 @@ pub struct BarConfig {
     pub right: Vec<WidgetConfig>,
     /// Theme / visual settings.
     pub theme: ThemeConfig,
+    /// Bento dashboard overlay settings.
+    #[serde(default)]
+    pub dashboard: DashboardConfig,
 }
 
 impl Default for BarConfig {
@@ -28,8 +31,49 @@ impl Default for BarConfig {
             center: vec![WidgetConfig::new("clock")],
             right: vec![WidgetConfig::new("cpu"), WidgetConfig::new("memory")],
             theme: ThemeConfig::default(),
+            dashboard: DashboardConfig::default(),
         }
     }
+}
+
+/// Configuration for the bento-style full-screen dashboard overlay.
+///
+/// Launch with `bar-dashboard` — bind it to a Hyprland key:
+/// `bind = SUPER, D, exec, bar-dashboard`
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DashboardConfig {
+    /// When `false`, `bar-dashboard` is a no-op (exits immediately).
+    pub enabled: bool,
+    /// Visual card theme.
+    /// `"minimal"` — text only, no borders.
+    /// `"cards"` — pill borders matching bar style (default).
+    /// `"full"` — rich cards with progress bars and semantic colors.
+    /// `"vivid"` — bold semantic colors and strong borders.
+    pub theme: String,
+    /// Number of columns in the bento grid (2–4).  Default: 3.
+    pub columns: u8,
+    /// Ordered list of card types to display.
+    /// Possible values: `"clock"`, `"network"`, `"battery"`, `"cpu"`, `"memory"`,
+    /// `"disk"`, `"volume"`, `"brightness"`, `"media"`, `"power"`,
+    /// `"uptime"`, `"temperature"`, `"updates"`, `"notifications"`.
+    pub items: Vec<String>,
+}
+
+impl Default for DashboardConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            theme:   "cards".to_string(),
+            columns: 3,
+            items:   default_dashboard_items(),
+        }
+    }
+}
+
+fn default_dashboard_items() -> Vec<String> {
+    ["clock", "network", "battery", "cpu", "memory", "disk", "volume", "media", "power"]
+        .iter().map(|s| s.to_string()).collect()
 }
 
 /// Global bar settings.

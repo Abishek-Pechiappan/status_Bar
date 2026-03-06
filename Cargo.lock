@@ -294,6 +294,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bar-dashboard"
+version = "0.1.0"
+dependencies = [
+ "bar-config",
+ "bar-theme",
+ "chrono",
+ "futures",
+ "iced",
+ "iced_layershell",
+ "sysinfo",
+ "tokio",
+]
+
+[[package]]
 name = "bar-editor"
 version = "0.1.0"
 dependencies = [
