@@ -120,6 +120,16 @@ pub enum Message {
     /// Internal 200 ms timer tick used to check the auto-hide countdown.
     AutoHideTick,
 
+    // ── Panel management ──────────────────────────────────────────────────────
+    /// Close all open panels (notify, calendar, power) — fired by click-outside.
+    CloseAllPanels,
+    /// Navigate calendar one month backward.
+    CalendarPrevMonth,
+    /// Navigate calendar one month forward.
+    CalendarNextMonth,
+    /// Cursor entered/left a notification card (Some(id) = enter, None = leave).
+    NotifyCardHover(Option<u32>),
+
     // ── Internal ──────────────────────────────────────────────────────────────
     /// One-second timer tick — used to update the clock.
     Tick,

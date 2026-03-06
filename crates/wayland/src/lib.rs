@@ -44,7 +44,7 @@ const DEFAULT_SYSTEM_INTERVAL_MS: u64 = 2_000;
 /// Height of the notification panel that drops below the bar (pixels).
 const NOTIFY_PANEL_HEIGHT: u32 = 300;
 /// Height of the calendar panel that drops below the bar (pixels).
-const CALENDAR_PANEL_HEIGHT: u32 = 220;
+const CALENDAR_PANEL_HEIGHT: u32 = 250;
 /// Height of the power panel that drops below the bar (pixels).
 const POWER_PANEL_HEIGHT: u32 = 120;
 /// Maximum number of power action buttons (lock/sleep/hibernate/logout/reboot/shutdown).
@@ -76,6 +76,11 @@ pub fn run() -> iced_layershell::Result {
     } else {
         0
     };
+
+    // Enable Hyprland backdrop blur for this layer surface (1-line change).
+    let _ = std::process::Command::new("hyprctl")
+        .args(["keyword", "layerrule", "blur,bar"])
+        .output();
 
     let _ = CUSTOM_CMD.set(config.global.custom_command.clone());
     let interval_ms = (config.global.system_poll_secs as u64).max(1) * 1_000;
@@ -163,6 +168,10 @@ struct Bar {
     net_tx_history: std::collections::VecDeque<f32>,
     // Whether the calendar panel is currently open
     calendar_open: bool,
+    // Month offset from current (0 = today's month, -1 = prev, +1 = next)
+    calendar_month_offset: i32,
+    // Notification card currently under the cursor (for hover highlight)
+    hover_notif_id: Option<u32>,
     // ── Power panel ───────────────────────────────────────────────────────────
     /// Whether inline power mode is active (power buttons replace bar content).
     power_inline_open: bool,
@@ -218,7 +227,9 @@ impl Bar {
             cpu_history:    std::collections::VecDeque::with_capacity(20),
             net_rx_history: std::collections::VecDeque::with_capacity(20),
             net_tx_history: std::collections::VecDeque::with_capacity(20),
-            calendar_open:     false,
+            calendar_open:          false,
+            calendar_month_offset:  0,
+            hover_notif_id:         None,
             power_inline_open: false,
             power_anim:        Animation::new(false).slow().easing(Easing::EaseOutCubic),
             power_hover_anim:  std::array::from_fn(|_| {
@@ -643,6 +654,32 @@ impl Bar {
                 }
             }
 
+            // ── Panel management ──────────────────────────────────────────────
+            AppMessage::CloseAllPanels => {
+                let was_open = self.state.notify_panel_open
+                    || self.calendar_open
+                    || self.state.power_panel_open;
+                self.state.notify_panel_open = false;
+                self.calendar_open = false;
+                self.calendar_month_offset = 0;
+                if self.state.power_panel_open {
+                    self.state.power_panel_open = false;
+                    self.power_anim.go_mut(false, std::time::Instant::now());
+                }
+                if was_open {
+                    return self.sync_surface_size();
+                }
+            }
+            AppMessage::CalendarPrevMonth => {
+                self.calendar_month_offset -= 1;
+            }
+            AppMessage::CalendarNextMonth => {
+                self.calendar_month_offset += 1;
+            }
+            AppMessage::NotifyCardHover(id) => {
+                self.hover_notif_id = id;
+            }
+
             AppMessage::Tick | AppMessage::Shutdown => {}
         }
         Task::none()
@@ -772,20 +809,33 @@ impl Bar {
         let power_dropdown_active = power_style == "dropdown"
             && (self.state.power_panel_open || self.power_anim.is_animating(now));
 
-        let content: Element<'_, Message> = if self.state.notify_panel_open {
-            column![bar_outer, self.view_notify_panel()]
-                .width(Length::Fill)
-                .into()
-        } else if self.calendar_open {
-            column![bar_outer, self.view_calendar_panel()]
-                .width(Length::Fill)
-                .into()
-        } else if power_dropdown_active {
-            column![bar_outer, self.view_power_panel()]
-                .width(Length::Fill)
+        let any_panel_open = self.state.notify_panel_open
+            || self.calendar_open
+            || power_dropdown_active;
+
+        // When a panel is open, clicking the bar area (outside panel content) closes it.
+        let bar_clickable: Element<'_, Message> = if any_panel_open {
+            iced::widget::mouse_area(bar_outer)
+                .on_press(Message::App(AppMessage::CloseAllPanels))
                 .into()
         } else {
             bar_outer
+        };
+
+        let content: Element<'_, Message> = if self.state.notify_panel_open {
+            column![bar_clickable, self.view_notify_panel()]
+                .width(Length::Fill)
+                .into()
+        } else if self.calendar_open {
+            column![bar_clickable, self.view_calendar_panel()]
+                .width(Length::Fill)
+                .into()
+        } else if power_dropdown_active {
+            column![bar_clickable, self.view_power_panel()]
+                .width(Length::Fill)
+                .into()
+        } else {
+            bar_clickable
         };
 
         // When auto-hide is active, track cursor enter/leave on the whole surface.
@@ -845,11 +895,16 @@ impl Bar {
             .width(Length::Fill)
             .into()
         } else {
+            let hover_id   = self.hover_notif_id;
+            let card_hover_bg = self.theme.foreground.with_alpha(0.06).to_iced();
+
             let items: Vec<Element<'_, Message>> = self.state.notifications
                 .iter()
                 .rev()
                 .map(|n| {
                     let id = n.id;
+                    let is_hovered = hover_id == Some(id);
+
                     let body_line: Element<'_, Message> = if n.body.is_empty() {
                         iced::widget::Space::new().height(0.0).into()
                     } else {
@@ -859,7 +914,7 @@ impl Bar {
                             .into()
                     };
 
-                    row![
+                    let card = row![
                         iced::widget::column![
                             iced::widget::text(n.app_name.as_str())
                                 .size(font_size - 2.0)
@@ -877,8 +932,25 @@ impl Bar {
                         .style(iced::widget::button::text),
                     ]
                     .align_y(iced::Alignment::Start)
-                    .padding([6.0, 12.0])
-                    .into()
+                    .padding([6.0, 12.0]);
+
+                    let card_container: Element<'_, Message> = container(card)
+                        .width(Length::Fill)
+                        .style(move |_: &iced::Theme| iced::widget::container::Style {
+                            background: is_hovered
+                                .then_some(iced::Background::Color(card_hover_bg)),
+                            border: iced::Border {
+                                radius: 6.0.into(),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        })
+                        .into();
+
+                    iced::widget::mouse_area(card_container)
+                        .on_enter(Message::App(AppMessage::NotifyCardHover(Some(id))))
+                        .on_exit(Message::App(AppMessage::NotifyCardHover(None)))
+                        .into()
                 })
                 .collect();
 
@@ -920,10 +992,25 @@ impl Bar {
     fn view_calendar_panel(&self) -> Element<'_, Message> {
         use chrono::Datelike;
 
-        let now    = self.state.time;
-        let year   = now.year();
-        let month  = now.month();
-        let today  = now.day();
+        let real_now  = self.state.time;
+        let today_ymd = (real_now.year(), real_now.month(), real_now.day());
+
+        // Apply month offset to determine which month to display.
+        let offset = self.calendar_month_offset;
+        let display_date = if offset >= 0 {
+            real_now
+                .date_naive()
+                .checked_add_months(chrono::Months::new(offset as u32))
+                .unwrap_or_else(|| real_now.date_naive())
+        } else {
+            real_now
+                .date_naive()
+                .checked_sub_months(chrono::Months::new((-offset) as u32))
+                .unwrap_or_else(|| real_now.date_naive())
+        };
+        let year  = display_date.year();
+        let month = display_date.month();
+
         let fg     = self.theme.foreground.to_iced();
         let dim    = self.theme.foreground.with_alpha(0.5).to_iced();
         let accent = self.theme.accent.to_iced();
@@ -941,12 +1028,28 @@ impl Bar {
         };
         let bg_iced = panel_bg.to_iced();
 
-        let month_name = now.format("%B %Y").to_string();
-        let header = container(iced::widget::text(month_name).size(fsize).color(fg))
-            .padding([8.0, 12.0])
-            .width(Length::Fill);
+        // ── Month navigation header ───────────────────────────────────────────
+        let month_name = display_date
+            .format("%B %Y")
+            .to_string();
 
-        // Day-of-week header row
+        let nav = row![
+            iced::widget::button(iced::widget::text("◀").size(fsize).color(fg))
+                .on_press(Message::App(AppMessage::CalendarPrevMonth))
+                .padding([2.0, 8.0])
+                .style(iced::widget::button::text),
+            container(iced::widget::text(month_name).size(fsize).color(fg))
+                .width(Length::Fill)
+                .center_x(Length::Fill),
+            iced::widget::button(iced::widget::text("▶").size(fsize).color(fg))
+                .on_press(Message::App(AppMessage::CalendarNextMonth))
+                .padding([2.0, 8.0])
+                .style(iced::widget::button::text),
+        ]
+        .align_y(iced::Alignment::Center)
+        .padding([6.0, 8.0]);
+
+        // ── Day-of-week header row ────────────────────────────────────────────
         let dow_row: Vec<Element<'_, Message>> = ["Mo","Tu","We","Th","Fr","Sa","Su"]
             .iter()
             .map(|&d| {
@@ -975,6 +1078,8 @@ impl Bar {
         let num_rows = (total_cells + 6) / 7;
         let mut week_rows: Vec<Element<'_, Message>> = Vec::new();
 
+        let viewing_current_month = (year, month) == (today_ymd.0, today_ymd.1);
+
         for row_i in 0..num_rows {
             let cells: Vec<Element<'_, Message>> = (0..7)
                 .map(|col_i| {
@@ -984,14 +1089,37 @@ impl Bar {
                     } else {
                         Some((cell - start_offset + 1) as u32)
                     };
+                    let is_today = viewing_current_month
+                        && day == Some(today_ymd.2);
                     let (label, color) = match day {
                         None    => ("  ".to_string(), dim),
                         Some(d) => {
-                            let c = if d == today { accent } else { fg };
+                            let c = if is_today { accent } else { fg };
                             (format!("{d:2}"), c)
                         }
                     };
-                    container(iced::widget::text(label).size(fsize - 1.0).color(color))
+
+                    // Today gets an accent underline via a column with a dot.
+                    let cell_elem: Element<'_, Message> = if is_today {
+                        iced::widget::column![
+                            iced::widget::text(label).size(fsize - 1.0).color(color),
+                            container(iced::widget::Space::new())
+                                .width(Length::Fixed(4.0))
+                                .height(Length::Fixed(3.0))
+                                .style(move |_: &iced::Theme| iced::widget::container::Style {
+                                    background: Some(iced::Background::Color(accent)),
+                                    border: iced::Border { radius: 2.0.into(), ..Default::default() },
+                                    ..Default::default()
+                                }),
+                        ]
+                        .align_x(iced::Alignment::Center)
+                        .spacing(1.0)
+                        .into()
+                    } else {
+                        iced::widget::text(label).size(fsize - 1.0).color(color).into()
+                    };
+
+                    container(cell_elem)
                         .width(Length::FillPortion(1))
                         .center_x(Length::FillPortion(1))
                         .padding([2.0, 0.0])
@@ -1020,7 +1148,7 @@ impl Bar {
             .into();
 
         container(
-            column![top_border, header, iced::widget::rule::horizontal(1), grid]
+            column![top_border, nav, iced::widget::rule::horizontal(1), grid]
                 .width(Length::Fill),
         )
         .width(Length::Fill)
