@@ -332,21 +332,10 @@ impl Dashboard {
         //  first SysReady fired 2 s later.)
         let prog  = 1.0f32;
         let t     = &self.theme;
-        let bg    = t.background;
-        let fgc   = t.foreground;
-        let fg    = fgc.to_iced();
+        let fg    = t.foreground.to_iced();
         let fsize = t.font_size;
 
-        // Modal: blend 18% fg into bg → lifted look
-        let mix = 0.18f32;
-        let modal_bg = Color::from_rgba(
-            (bg.r + (fgc.r - bg.r) * mix).clamp(0.0, 1.0),
-            (bg.g + (fgc.g - bg.g) * mix).clamp(0.0, 1.0),
-            (bg.b + (fgc.b - bg.b) * mix).clamp(0.0, 1.0),
-            0.97,
-        );
-        let modal_border = Color { a: 0.22, ..fg };
-        let overlay_bg   = Color::from_rgba(0.0, 0.0, 0.0, 0.72);
+        let overlay_bg = Color::from_rgba(0.0, 0.0, 0.0, 0.72);
 
         // Build bento grid rows
         let cols = self.dash_config.columns.clamp(2, 4) as usize;
@@ -394,32 +383,18 @@ impl Dashboard {
         let hint_col = Color { a: 0.38, ..fg };
         let hint = text("Esc to close").size(fsize - 2.0).color(hint_col);
 
-        let modal = container(
+        // Cards float directly on the dimmed overlay — no surrounding modal box.
+        // Use the ✕ button or Escape to close.
+        container(
             column![header, grid, hint].spacing(16.0).align_x(Alignment::Center),
         )
-        .padding(iced::Padding {
-            top:    14.0,
-            right:  48.0,
-            bottom: 36.0,
-            left:   48.0,
-        })
+        .width(Length::Fill).height(Length::Fill)
+        .align_x(Alignment::Center).align_y(Alignment::Center)
         .style(move |_: &iced::Theme| iced::widget::container::Style {
-            background: Some(Background::Color(modal_bg)),
-            border: Border { radius: 24.0.into(), color: modal_border, width: 1.0 },
+            background: Some(Background::Color(overlay_bg)),
             ..Default::default()
-        });
-
-        // No wrapping mouse_area — the old outer mouse_area fired Dismiss for
-        // ANY click including inside the modal, making buttons/sliders unusable.
-        // Use the ✕ button or Escape to close.
-        container(modal)
-            .width(Length::Fill).height(Length::Fill)
-            .align_x(Alignment::Center).align_y(Alignment::Center)
-            .style(move |_: &iced::Theme| iced::widget::container::Style {
-                background: Some(Background::Color(overlay_bg)),
-                ..Default::default()
-            })
-            .into()
+        })
+        .into()
     }
 
     // ── Card builder ──────────────────────────────────────────────────────────
@@ -429,8 +404,6 @@ impl Dashboard {
         let fsize  = t.font_size;
         let fg     = t.foreground.to_iced();
         let accent = t.accent.to_iced();
-        let bg     = t.background;
-        let fgc    = t.foreground;
         let theme  = self.dash_config.theme.as_str();
         let nerd   = t.use_nerd_icons;
 
@@ -441,14 +414,7 @@ impl Dashboard {
             _                => (160.0f32, 108.0f32),  // "cards"
         };
 
-        // Card background — slightly lifted from modal background
-        let mix2 = if theme == "vivid" { 0.14f32 } else { 0.07f32 };
-        let card_bg = Color::from_rgba(
-            (bg.r + (fgc.r - bg.r) * mix2).clamp(0.0, 1.0),
-            (bg.g + (fgc.g - bg.g) * mix2).clamp(0.0, 1.0),
-            (bg.b + (fgc.b - bg.b) * mix2).clamp(0.0, 1.0),
-            0.90 * prog,
-        );
+        let card_bg = Color::TRANSPARENT;
         let bar_w = card_w - 44.0;
 
         // Build content + get the card's semantic accent color
