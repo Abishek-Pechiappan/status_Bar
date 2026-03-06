@@ -337,25 +337,41 @@ impl Dashboard {
 
         let overlay_bg = Color::from_rgba(0.0, 0.0, 0.0, 0.72);
 
-        // Build bento grid rows
+        // Span-aware bento grid — wide cards (clock/media/power) span 2 columns.
         let cols = self.dash_config.columns.clamp(2, 4) as usize;
         let gap  = 14.0f32;
 
-        let grid_rows: Vec<Element<'_, Message>> = self.dash_config.items
-            .chunks(cols)
-            .filter_map(|chunk: &[String]| {
-                let row_cards: Vec<Element<'_, Message>> = chunk.iter()
-                    .filter_map(|item: &String| self.make_card(item.as_str(), prog))
-                    .collect();
-                if row_cards.is_empty() { return None; }
-                Some(
-                    iced::widget::Row::from_vec(row_cards)
-                        .spacing(gap)
-                        .align_y(Alignment::Center)
-                        .into(),
-                )
-            })
-            .collect();
+        let mut grid_rows: Vec<Element<'_, Message>> = Vec::new();
+        let mut row_items: Vec<Element<'_, Message>> = Vec::new();
+        let mut row_span = 0usize;
+
+        for item in &self.dash_config.items {
+            let span = card_span(item.as_str()).min(cols);
+            if row_span + span > cols && !row_items.is_empty() {
+                grid_rows.push(
+                    iced::widget::Row::from_vec(std::mem::take(&mut row_items))
+                        .spacing(gap).align_y(Alignment::Center).into(),
+                );
+                row_span = 0;
+            }
+            if let Some(card) = self.make_card(item.as_str(), prog, span) {
+                row_items.push(card);
+                row_span += span;
+            }
+            if row_span >= cols {
+                grid_rows.push(
+                    iced::widget::Row::from_vec(std::mem::take(&mut row_items))
+                        .spacing(gap).align_y(Alignment::Center).into(),
+                );
+                row_span = 0;
+            }
+        }
+        if !row_items.is_empty() {
+            grid_rows.push(
+                iced::widget::Row::from_vec(row_items)
+                    .spacing(gap).align_y(Alignment::Center).into(),
+            );
+        }
 
         let grid = iced::widget::Column::from_vec(grid_rows)
             .spacing(gap)
@@ -399,7 +415,7 @@ impl Dashboard {
 
     // ── Card builder ──────────────────────────────────────────────────────────
 
-    fn make_card(&self, item: &str, prog: f32) -> Option<Element<'_, Message>> {
+    fn make_card(&self, item: &str, prog: f32, span: usize) -> Option<Element<'_, Message>> {
         let t      = &self.theme;
         let fsize  = t.font_size;
         let fg     = t.foreground.to_iced();
@@ -407,14 +423,23 @@ impl Dashboard {
         let theme  = self.dash_config.theme.as_str();
         let nerd   = t.use_nerd_icons;
 
-        // Card dimensions by theme
-        let (card_w, card_h) = match theme {
+        // Base card size per theme
+        let (base_w, base_h) = match theme {
             "minimal"        => (130.0f32, 66.0f32),
             "full" | "vivid" => (175.0f32, 128.0f32),
-            _                => (160.0f32, 108.0f32),  // "cards"
+            _                => (160.0f32, 108.0f32),
+        };
+        let gap = 14.0f32;
+        // Wide cards span 2 columns; height grows for content-rich cards
+        let card_w = if span >= 2 { base_w * span as f32 + gap * (span - 1) as f32 } else { base_w };
+        let card_h = match item {
+            "clock" | "media" => base_h * 1.25,
+            _ => base_h,
         };
 
-        let card_bg = Color::TRANSPARENT;
+        // Semi-transparent card background so text stays readable over the overlay
+        let bg_iced = t.background.to_iced();
+        let card_bg = Color { a: 0.60, ..bg_iced };
         let bar_w = card_w - 44.0;
 
         // Build content + get the card's semantic accent color
@@ -983,6 +1008,14 @@ fn fmt_uptime(secs: u64) -> String {
     let h = secs / 3600;
     let m = (secs % 3600) / 60;
     if h > 0 { format!("{h}h {m:02}m") } else { format!("{m}m") }
+}
+
+/// How many grid columns this card type spans (1 = normal, 2 = wide).
+fn card_span(item: &str) -> usize {
+    match item {
+        "clock" | "media" | "power" => 2,
+        _ => 1,
+    }
 }
 
 fn lerp_color(a: Color, b: Color, t: f32) -> Color {
