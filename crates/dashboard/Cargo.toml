@@ -17,3 +17,4 @@ sysinfo         = { workspace = true }
 tokio           = { workspace = true }
 chrono          = { workspace = true }
 futures         = { version = "0.3" }
+lilt            = "0.8"

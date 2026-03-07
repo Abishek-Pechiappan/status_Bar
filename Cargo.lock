@@ -274,6 +274,7 @@ dependencies = [
  "futures",
  "iced",
  "iced_layershell",
+ "lilt",
  "sysinfo",
  "tokio",
 ]
