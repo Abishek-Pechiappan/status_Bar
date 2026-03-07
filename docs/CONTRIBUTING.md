@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for your interest in contributing to **bar**!
+Thank you for your interest in contributing to **bar-dashboard**!
 
 ---
 
@@ -9,7 +9,7 @@ Thank you for your interest in contributing to **bar**!
 ### Prerequisites
 
 - Rust 1.80+ via [rustup](https://rustup.rs/)
-- A running Hyprland session (for testing the bar itself)
+- A running Hyprland session (for testing the overlay)
 - Wayland session with `wlr-layer-shell` support
 
 ### Clone and build
@@ -18,14 +18,11 @@ Thank you for your interest in contributing to **bar**!
 git clone https://github.com/hyrostrix/bar
 cd bar
 
-# Build everything
-cargo build --workspace
+# Build the dashboard
+cargo build -p bar-dashboard
 
-# Run the bar (requires Hyprland)
-cargo run
-
-# Run the editor (works on any Wayland/X11 desktop)
-cargo run --bin bar-editor
+# Run the dashboard overlay (requires Hyprland)
+cargo run -p bar-dashboard
 
 # Run all tests
 cargo test --workspace
@@ -35,16 +32,13 @@ cargo test --workspace
 
 ```bash
 # Fast type-check without linking
-cargo check --workspace
+cargo check -p bar-dashboard
 
 # Debug logging
-RUST_LOG=debug cargo run
+RUST_LOG=debug cargo run -p bar-dashboard
 
-# Check a single crate
-cargo check -p bar-core
-
-# Build only the editor
-cargo build -p bar-editor
+# Release build
+cargo build --release -p bar-dashboard
 ```
 
 ---
@@ -53,77 +47,62 @@ cargo build -p bar-editor
 
 | Crate | Path | Purpose |
 |---|---|---|
-| `bar-core` | `crates/core` | `AppState`, `Message` enum, `BarWidget` trait, `BarError` |
-| `bar-config` | `crates/config` | `BarConfig` TOML schema, `load()`, `ConfigWatcher` |
-| `bar-theme` | `crates/theme` | `Color`, `Theme`, `BarStyle` |
-| `bar-system` | `crates/system` | CPU/RAM/disk/network/battery async monitor |
-| `bar-ipc` | `crates/hyprland-ipc` | Hyprland IPC client, event parser |
-| `bar-widgets` | `crates/widgets` | All 7 built-in widgets |
-| `bar-renderer` | `crates/renderer` | Layout engine (Phase 2 stub) |
-| `bar-wayland` | `crates/wayland` | `iced-layershell` application loop |
-| `bar-editor` | `crates/editor` | GUI config editor (standard iced window) |
+| `bar-config` | `crates/config` | `DashConfig` TOML schema, `load()`, `ConfigWatcher` |
+| `bar-theme` | `crates/theme` | `Color`, `Theme` (parsed from `ThemeConfig`) |
+| `bar-dashboard` | `crates/dashboard` | Full-screen bento overlay binary |
 
 ---
 
-## Adding a new widget
+## Adding a new dashboard card
 
-1. **Create the widget file** in `crates/widgets/src/`:
+1. **Add a new arm** to `make_card()` in `crates/dashboard/src/main.rs`:
 
 ```rust
-// crates/widgets/src/mywidget.rs
-use bar_core::state::AppState;
-use iced::Element;
-
-pub struct MyWidget;
-
-impl MyWidget {
-    pub fn view<'a, Message: Clone + 'static>(state: &'a AppState) -> Element<'a, Message> {
-        iced::widget::text(format!("hello {}", state.active_workspace)).into()
-    }
+"mycard" => {
+    let col = Color::from_rgba(0.8, 0.6, 0.9, opacity);
+    let content: Element<'_, Message> = column![
+        text("MY").size(fsize + 10.0).color(col),
+        text("My Card").size(fsize - 2.0).color(label_col),
+        text("value").size(fsize + 4.0).font(bold_font).color(val_col),
+    ].spacing(4.0).align_x(Alignment::Center).into();
+    (content, col)
 }
 ```
 
-2. **Export it** in `crates/widgets/src/lib.rs`:
+2. **Add a span** to `card_span()` if the card should be wider than 1 column:
 
 ```rust
-pub mod mywidget;
-pub use mywidget::MyWidget;
+"mycard" => 2,
 ```
 
-3. **Wire it** in `crates/wayland/src/lib.rs` inside the `view()` function's widget match:
+3. **Add it to `bar.toml`** under `items`:
 
-```rust
-"mywidget" => MyWidget::view(&self.state).into(),
+```toml
+items = [
+    "clock", "cpu", "memory",
+    "mycard",
+]
 ```
 
-4. **Register it** in the editor's widget picker in `crates/editor/src/main.rs`:
-
-```rust
-const ALL_WIDGETS: &[&str] = &[
-    "workspaces", "title", "clock", "cpu", "memory", "network", "battery",
-    "mywidget",  // add here
-];
-```
+4. **Document it** in [CONFIGURATION.md](CONFIGURATION.md).
 
 ---
 
 ## Code style
 
 - **No `unwrap()` in production paths** — use `?` or log and fall back gracefully
-- **No panics** in library crates (`bar-core`, `bar-config`, etc.)
 - Prefer `tracing::warn!` / `tracing::error!` over `eprintln!`
 - Format with `cargo fmt` before committing
-- Lint with `cargo clippy --workspace -- -D warnings`
+- Lint with `cargo clippy -p bar-dashboard -- -D warnings`
 
 ---
 
 ## Pull request checklist
 
-- [ ] `cargo check --workspace` passes
-- [ ] `cargo test --workspace` passes
-- [ ] `cargo clippy --workspace` produces no new warnings
+- [ ] `cargo check -p bar-dashboard` passes
+- [ ] `cargo clippy -p bar-dashboard` produces no new warnings
 - [ ] `cargo fmt --check` passes
-- [ ] New widget (if any) is documented in [CONFIGURATION.md](CONFIGURATION.md)
+- [ ] New card (if any) is documented in [CONFIGURATION.md](CONFIGURATION.md)
 - [ ] Commit message is concise and describes *why*, not just *what*
 
 ---
@@ -131,10 +110,10 @@ const ALL_WIDGETS: &[&str] = &[
 ## Commit message convention
 
 ```
-feat: add MPRIS widget for media playback control
-fix: prevent workspace widget panic when IPC socket is missing
+feat: add weather card with wttr.in integration
+fix: prevent sparkline panic when history buffer is empty
 chore: bump sysinfo to 0.39
-docs: document per-monitor config override
+docs: document card theming options
 ```
 
 Prefixes: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `perf`
@@ -146,8 +125,7 @@ Prefixes: `feat`, `fix`, `refactor`, `chore`, `docs`, `test`, `perf`
 Please include:
 - Hyprland version (`hyprctl version`)
 - Rust version (`rustc --version`)
-- GPU/driver info (Vulkan/Mesa version if relevant)
-- The `bar.toml` that reproduces the issue
-- `RUST_LOG=debug bar 2>&1` output
+- Your `bar.toml`
+- `RUST_LOG=debug bar-dashboard 2>&1` output
 
 File issues at: https://github.com/hyrostrix/bar/issues
