@@ -1,37 +1,26 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 /// Root configuration structure parsed from `bar.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
-pub struct BarConfig {
-    /// Global settings applied to all monitors.
-    pub global: GlobalConfig,
-    /// Per-monitor overrides (key = output name, e.g. `"DP-1"`).
-    pub monitors: HashMap<String, MonitorConfig>,
-    /// Widgets on the left side of the bar.
-    pub left: Vec<WidgetConfig>,
-    /// Widgets in the centre of the bar.
-    pub center: Vec<WidgetConfig>,
-    /// Widgets on the right side of the bar.
-    pub right: Vec<WidgetConfig>,
+pub struct DashConfig {
+    /// Command to run for the Lock action in the power menu.
+    pub lock_command: String,
+    /// City name for wttr.in weather card (e.g. `"London"`).  Empty = disabled.
+    pub weather_location: String,
     /// Theme / visual settings.
     pub theme: ThemeConfig,
     /// Bento dashboard overlay settings.
-    #[serde(default)]
     pub dashboard: DashboardConfig,
 }
 
-impl Default for BarConfig {
+impl Default for DashConfig {
     fn default() -> Self {
         Self {
-            global: GlobalConfig::default(),
-            monitors: HashMap::new(),
-            left: vec![WidgetConfig::new("workspaces")],
-            center: vec![WidgetConfig::new("clock")],
-            right: vec![WidgetConfig::new("cpu"), WidgetConfig::new("memory")],
-            theme: ThemeConfig::default(),
-            dashboard: DashboardConfig::default(),
+            lock_command:     "loginctl lock-session".to_string(),
+            weather_location: String::new(),
+            theme:            ThemeConfig::default(),
+            dashboard:        DashboardConfig::default(),
         }
     }
 }
@@ -45,18 +34,14 @@ impl Default for BarConfig {
 pub struct DashboardConfig {
     /// When `false`, `bar-dashboard` is a no-op (exits immediately).
     pub enabled: bool,
-    /// Visual card theme.
-    /// `"minimal"` — text only, no borders.
-    /// `"cards"` — pill borders matching bar style (default).
-    /// `"full"` — rich cards with progress bars and semantic colors.
-    /// `"vivid"` — bold semantic colors and strong borders.
+    /// Visual card theme: `"minimal"`, `"cards"` (default), `"full"`, `"vivid"`.
     pub theme: String,
     /// Number of columns in the bento grid (2–4).  Default: 3.
     pub columns: u8,
     /// Ordered list of card types to display.
     /// Possible values: `"clock"`, `"network"`, `"battery"`, `"cpu"`, `"memory"`,
     /// `"disk"`, `"volume"`, `"brightness"`, `"media"`, `"power"`,
-    /// `"uptime"`, `"temperature"`, `"updates"`, `"notifications"`,
+    /// `"uptime"`, `"temperature"`, `"updates"`,
     /// `"swap"`, `"load"`, `"gpu"`, `"bluetooth"`, `"weather"`.
     pub items: Vec<String>,
 }
@@ -77,127 +62,11 @@ fn default_dashboard_items() -> Vec<String> {
         .iter().map(|s| s.to_string()).collect()
 }
 
-/// Global bar settings.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
-pub struct GlobalConfig {
-    /// Bar height in logical pixels.
-    pub height: u32,
-    /// Whether the bar sits at the top or the bottom.
-    pub position: Position,
-    /// Reserve an exclusive zone so windows don't overlap the bar.
-    pub exclusive_zone: bool,
-    /// Overall background opacity (0.0 – 1.0).
-    pub opacity: f32,
-    /// Horizontal gap between bar and screen edges in logical pixels (floating look).
-    pub margin: u32,
-    /// Vertical gap between bar and screen edge in logical pixels (floating look).
-    pub margin_top: u32,
-    /// Shell command to run every poll cycle, displayed by the `custom` widget.
-    /// Empty string disables the custom widget.
-    pub custom_command: String,
-    /// Command to run for the Lock action in the power menu.
-    /// Defaults to `loginctl lock-session` (works with hyprlock, swaylock, etc.).
-    pub lock_command: String,
-    /// How often to refresh system stats in seconds (CPU, RAM, network…).
-    /// Lower = snappier widgets but more CPU use.  Default: 2.
-    pub system_poll_secs: u32,
-    /// When `true`, the bar collapses to a 1 px strip when the cursor is not
-    /// over it, and slides back to full height when the cursor approaches the edge.
-    /// Automatically sets `exclusive_zone = false` so windows use the full screen.
-    pub auto_hide: bool,
-    /// Milliseconds of cursor-absence before the bar hides.  Default: 1000.
-    pub auto_hide_delay_ms: u32,
-    /// How the power menu opens.
-    /// `"dropdown"` — panel drops below the bar (default).
-    /// `"inline"`   — power actions replace the bar row in-place.
-    /// `"overlay"`  — spawns the separate `bar-powermenu` fullscreen overlay.
-    pub power_menu_style: String,
-    /// Animation style for the power panel.
-    /// `"slide"` (default), `"fade"`, `"scale"`, or `"none"`.
-    pub power_anim_style: String,
-    /// Ordered list of enabled power actions.
-    /// Possible values: `"lock"`, `"sleep"`, `"hibernate"`, `"logout"`, `"reboot"`, `"shutdown"`.
-    #[serde(default = "default_power_actions")]
-    pub power_actions: Vec<String>,
-    /// Location string used for weather lookups (e.g. `"London"`, `"New York"`, `"48.8566,2.3522"`).
-    /// Empty string disables the weather card in the dashboard.
-    #[serde(default)]
-    pub weather_location: String,
-}
-
-impl Default for GlobalConfig {
-    fn default() -> Self {
-        Self {
-            height:          40,
-            position:        Position::Top,
-            exclusive_zone:  true,
-            opacity:         0.95,
-            margin:          0,
-            margin_top:      0,
-            custom_command:  String::new(),
-            lock_command:    "loginctl lock-session".to_string(),
-            system_poll_secs: 2,
-            auto_hide:          false,
-            auto_hide_delay_ms: 1000,
-            power_menu_style:   "overlay".to_string(),
-            power_anim_style:   "slide".to_string(),
-            power_actions:      default_power_actions(),
-            weather_location:   String::new(),
-        }
-    }
-}
-
-fn default_power_actions() -> Vec<String> {
-    ["lock", "sleep", "hibernate", "logout", "reboot", "shutdown"]
-        .iter().map(|s| s.to_string()).collect()
-}
-
-/// Bar position on screen.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum Position {
-    #[default]
-    Top,
-    Bottom,
-}
-
-/// Per-monitor overrides; unset fields fall back to `GlobalConfig`.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-#[serde(default)]
-pub struct MonitorConfig {
-    pub height: Option<u32>,
-    pub position: Option<Position>,
-}
-
-/// Config block for a single widget instance.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WidgetConfig {
-    /// Widget type identifier, e.g. `"clock"`, `"workspaces"`, `"cpu"`.
-    pub kind: String,
-    /// Optional display label override.
-    #[serde(default)]
-    pub label: Option<String>,
-    /// Arbitrary extra options forwarded to the widget at construction.
-    #[serde(default, flatten)]
-    pub options: toml::Table,
-}
-
-impl WidgetConfig {
-    pub fn new(kind: impl Into<String>) -> Self {
-        Self {
-            kind: kind.into(),
-            label: None,
-            options: toml::Table::new(),
-        }
-    }
-}
-
 /// Theme / styling configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ThemeConfig {
-    /// Bar background color (hex, e.g. `"#1e1e2e"`).
+    /// Background color (hex, e.g. `"#1e1e2e"`).
     pub background: String,
     /// Primary text/foreground color.
     pub foreground: String,
@@ -209,7 +78,7 @@ pub struct ThemeConfig {
     pub font_size: f32,
     /// Corner radius for widget containers (pixels).
     pub border_radius: f32,
-    /// Inner padding for each widget (pixels).
+    /// Inner padding (pixels).
     pub padding: u16,
     /// Gap between widgets (pixels).
     pub gap: u16,
@@ -219,80 +88,47 @@ pub struct ThemeConfig {
     pub widget_border_color: String,
     /// Widget container border width in logical pixels (0 = no border).
     pub widget_border_width: u32,
-    /// Bar border color (hex).  Empty string = no border.
-    pub border_color: String,
-    /// Bar border width in logical pixels (0 = no border).
-    pub border_width: u32,
     /// `strftime`-style time format string (default: `"%H:%M"`).
     pub clock_format: String,
     /// `strftime`-style date format string (default: `"%a %d %b"`).
     pub date_format: String,
     /// Icon style: `"nerd"` uses Nerd Font glyphs; `"ascii"` uses plain text labels.
-    /// Use `"ascii"` if your terminal / font shows question marks for icons.
     pub icon_style: String,
     /// Horizontal inner padding for each widget pill container (pixels).
     pub widget_padding_x: u16,
     /// Vertical inner padding for each widget pill container (pixels).
     pub widget_padding_y: u16,
-    /// Workspace display style: `"numbers"` shows workspace names/IDs;
-    /// `"dots"` shows ● for active and ○ for inactive workspaces.
-    pub workspace_style: String,
-    /// When `true` (default), all open workspaces are shown.
-    /// When `false`, only the active workspace is shown.
-    pub workspace_show_all: bool,
-    /// What the network widget displays.  Comma-separated list of:
-    /// `"speed"` (↓rx ↑tx), `"name"` (interface name), `"signal"` (WiFi dBm/bars).
-    /// Default: `"speed"`.  Example: `"speed,signal"` or `"name,speed"`.
-    pub network_show: String,
-    /// Show an interactive drag slider in the volume widget.
-    /// When `false` (default), only the icon and percentage text are shown.
-    pub volume_show_slider: bool,
-    /// Show an interactive drag slider in the brightness widget.
-    /// When `false` (default), only the icon and percentage text are shown.
-    pub brightness_show_slider: bool,
-    /// Append seconds (`:SS`) to the time shown by the clock widget.
+    /// When `true`, the clock widget appends seconds to the time display.
     pub clock_show_seconds: bool,
     /// Battery percentage at which the battery widget shows a low-power glyph.
     pub battery_warn_percent: u8,
-    /// Show tiny window-count dots below each workspace indicator.
-    pub workspace_show_counts: bool,
     /// Visual style for power menu action buttons.
-    /// `"icon_label"` (default) — icon stacked above text.
-    /// `"icon_only"` — icon only; label slides in on hover.
-    /// `"pill"` — icon + label side-by-side in a rounded pill.
+    /// `"icon_label"` (default), `"icon_only"`, `"pill"`.
     pub power_button_style: String,
 }
 
 impl Default for ThemeConfig {
     fn default() -> Self {
         Self {
-            background:        "#1e1e2e".to_string(), // Catppuccin Mocha — base
-            foreground:        "#cdd6f4".to_string(), // Catppuccin Mocha — text
-            accent:            "#cba6f7".to_string(), // Catppuccin Mocha — mauve
-            font:              "JetBrains Mono".to_string(),
-            font_size:         13.0,
-            border_radius:     6.0,
-            padding:           8,
-            gap:               4,
-            widget_bg:           String::new(), // transparent by default
-            widget_border_color: String::new(), // no widget border by default
+            background:          "#1e1e2e".to_string(), // Catppuccin Mocha — base
+            foreground:          "#cdd6f4".to_string(), // Catppuccin Mocha — text
+            accent:              "#cba6f7".to_string(), // Catppuccin Mocha — mauve
+            font:                "JetBrains Mono".to_string(),
+            font_size:           13.0,
+            border_radius:       6.0,
+            padding:             8,
+            gap:                 4,
+            widget_bg:           String::new(),
+            widget_border_color: String::new(),
             widget_border_width: 0,
-            border_color:        String::new(), // no bar border by default
-            border_width:        0,
-            clock_format:      "%H:%M".to_string(),
-            date_format:       "%a %d %b".to_string(),
-            icon_style:        "nerd".to_string(),
-            widget_padding_x:  8,
-            widget_padding_y:  4,
-            workspace_style:   "numbers".to_string(),
-            workspace_show_all: true,
-            network_show:           "speed".to_string(),
-            volume_show_slider:     false,
-            brightness_show_slider: false,
-            clock_show_seconds:     false,
-            battery_warn_percent:   20,
-            workspace_show_counts:  false,
-            power_button_style:     "icon_label".to_string(),
+            clock_format:        "%H:%M".to_string(),
+            date_format:         "%a %d %b".to_string(),
+            icon_style:          "nerd".to_string(),
+            widget_padding_x:    8,
+            widget_padding_y:    4,
+            clock_show_seconds:  false,
+            battery_warn_percent: 20,
+            power_button_style:  "icon_label".to_string(),
         }
     }
 }

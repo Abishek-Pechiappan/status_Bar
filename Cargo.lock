@@ -256,22 +256,12 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 name = "bar-config"
 version = "0.1.0"
 dependencies = [
- "bar-core",
  "notify",
  "serde",
  "thiserror 2.0.18",
  "tokio",
  "toml",
  "tracing",
-]
-
-[[package]]
-name = "bar-core"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "serde",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -293,7 +283,6 @@ name = "bar-theme"
 version = "0.1.0"
 dependencies = [
  "bar-config",
- "bar-core",
  "iced",
  "serde",
 ]

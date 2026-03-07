@@ -1,28 +1,27 @@
 pub mod schema;
 pub mod watcher;
 
-pub use schema::{BarConfig, GlobalConfig, MonitorConfig, Position, ThemeConfig, WidgetConfig};
+pub use schema::{DashConfig, DashboardConfig, ThemeConfig};
 pub use watcher::ConfigWatcher;
 
-use bar_core::{BarError, Result};
 use std::path::{Path, PathBuf};
 
-/// Load configuration from a TOML file.  Returns `BarConfig::default()` if
-/// the file doesn't exist so the bar always has sensible defaults.
-pub fn load(path: impl AsRef<Path>) -> Result<BarConfig> {
+/// Load configuration from a TOML file.  Returns `DashConfig::default()` if
+/// the file doesn't exist so the dashboard always has sensible defaults.
+pub fn load(path: impl AsRef<Path>) -> Result<DashConfig, String> {
     let path = path.as_ref();
     if !path.exists() {
         tracing::warn!(
             "Config file not found at '{}'; using defaults.",
             path.display()
         );
-        return Ok(BarConfig::default());
+        return Ok(DashConfig::default());
     }
 
     let raw = std::fs::read_to_string(path)
-        .map_err(|e| BarError::Config(format!("cannot read '{}': {e}", path.display())))?;
+        .map_err(|e| format!("cannot read '{}': {e}", path.display()))?;
 
-    toml::from_str(&raw).map_err(|e| BarError::Config(format!("TOML parse error: {e}")))
+    toml::from_str(&raw).map_err(|e| format!("TOML parse error: {e}"))
 }
 
 /// Return the default config path, honouring `$XDG_CONFIG_HOME`.

@@ -1,71 +1,12 @@
-# bar.toml — example configuration
+# bar.toml — dashboard configuration
 # Default location: $XDG_CONFIG_HOME/bar/bar.toml  (~/.config/bar/bar.toml)
 
-[global]
-height         = 40        # bar height in logical pixels
-position       = "top"     # "top" or "bottom"
-exclusive_zone = true      # reserve space so windows don't overlap the bar
-opacity        = 0.95
-margin         = 0         # horizontal gap from screen edges (floating bar)
-margin_top     = 0         # vertical gap from screen edge   (floating bar)
+# Command run when "Lock" is chosen in the power menu.
+lock_command = "loginctl lock-session"
 
-# ── Power menu ────────────────────────────────────────────────────────────────
-lock_command    = "loginctl lock-session"   # command run when "Lock" is chosen
-power_menu_style = "overlay"   # "overlay" (bento grid popup) | "dropdown" | "inline"
-power_anim_style = "slide"     # "slide" | "fade" | "scale" | "none"
-power_actions   = ["lock", "sleep", "hibernate", "logout", "reboot", "shutdown"]
-# Weather location for the dashboard weather card (city name, or "lat,lon").
+# City name for the weather card (e.g. "London", "New York", "48.8566,2.3522").
 # Leave empty to hide the weather card entirely.
-weather_location = ""          # e.g. "London" or "New York" or "48.8566,2.3522"
-
-# ── Widget layout ─────────────────────────────────────────────────────────────
-# Three sections: left · center · right
-# Available kinds:
-#   workspaces  — clickable Hyprland workspace buttons
-#   title       — active window title
-#   clock       — time and date
-#   cpu         — CPU usage %
-#   memory      — RAM used / total
-#   network     — download / upload rate
-#   battery     — battery level (auto-hidden on desktops)
-#   disk        — root filesystem usage (auto-hidden if unavailable)
-#   temperature — CPU temperature in °C (auto-hidden if no sensor)
-#   volume      — audio volume / mute state (requires wpctl)
-#   brightness  — screen brightness % (auto-hidden if no backlight)
-
-[[left]]
-kind = "workspaces"
-
-[[left]]
-kind = "title"
-
-[[center]]
-kind = "clock"
-
-[[right]]
-kind = "network"
-
-[[right]]
-kind = "cpu"
-
-[[right]]
-kind = "memory"
-
-[[right]]
-kind = "battery"      # automatically hidden on desktops with no battery
-
-# Uncomment to enable sensor widgets:
-# [[right]]
-# kind = "disk"
-
-# [[right]]
-# kind = "temperature"
-
-# [[right]]
-# kind = "volume"
-
-# [[right]]
-# kind = "brightness"
+weather_location = ""
 
 # ── Theme ─────────────────────────────────────────────────────────────────────
 [theme]
@@ -78,17 +19,14 @@ border_radius = 6.0
 padding       = 8
 gap           = 4
 
-# widget_bg gives each widget a background so border_radius is visible.
-# Without this, pill/rounded shapes have no effect (nothing to round).
+# widget_bg gives each card a background so border_radius is visible.
 widget_bg    = "#313244"   # Catppuccin Mocha — surface0  (comment out for no bg)
-border_color = ""          # bar border hex, empty = none
-border_width = 0           # bar border width in px
 
 clock_format = "%H:%M"     # strftime format for time
 date_format  = "%a %d %b"  # strftime format for date
 power_button_style = "icon_label"  # "icon_label" | "icon_only" | "pill"
 
-# ── Dashboard (bar-dashboard bento overlay) ───────────────────────────────────
+# ── Dashboard ─────────────────────────────────────────────────────────────────
 [dashboard]
 enabled = true
 theme   = "cards"   # "minimal" | "cards" | "full" | "vivid"
@@ -105,5 +43,5 @@ items = [
     "temperature", "updates", "swap",
     "load", "gpu", "bluetooth",
     "media", "power",
-    # "weather",   # uncomment and set weather_location in [global] to enable
+    # "weather",   # uncomment and set weather_location above to enable
 ]

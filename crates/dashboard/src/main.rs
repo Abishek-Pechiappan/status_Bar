@@ -492,8 +492,8 @@ impl Dashboard {
         let config           = load_config(default_path()).unwrap_or_default();
         let theme            = Theme::from_config(&config.theme);
         let dash_config      = config.dashboard.clone();
-        let lock_command     = config.global.lock_command.clone();
-        let weather_location = config.global.weather_location.clone();
+        let lock_command     = config.lock_command.clone();
+        let weather_location = config.weather_location.clone();
 
         let loc = weather_location.clone();
         let dash = Self {
@@ -1454,7 +1454,7 @@ fn sys_stream() -> impl iced::futures::Stream<Item = Message> {
         // Load weather_location once at stream startup
         let weather_location = {
             let config = load_config(default_path()).unwrap_or_default();
-            config.global.weather_location
+            config.weather_location
         };
         loop {
             tokio::time::sleep(Duration::from_secs(2)).await;

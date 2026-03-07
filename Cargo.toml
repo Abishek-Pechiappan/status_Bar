@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    "crates/core",
     "crates/config",
     "crates/theme",
     "crates/dashboard",
@@ -15,7 +14,6 @@ rust-version = "1.80"
 
 [workspace.dependencies]
 # ── Internal crates ───────────────────────────────────────────────────────────
-bar-core   = { path = "crates/core" }
 bar-config = { path = "crates/config" }
 bar-theme  = { path = "crates/theme" }
 

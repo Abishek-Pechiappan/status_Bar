@@ -7,33 +7,22 @@ pub use style::{BarStyle, WidgetStyle};
 use bar_config::ThemeConfig;
 
 /// Compiled theme derived from [`ThemeConfig`].
-///
-/// All colors are pre-parsed from hex strings into normalised `[0, 1]` RGBA.
-/// Calling [`Theme::from_config`] is infallible — invalid color strings fall
-/// back to safe defaults.
 #[derive(Debug, Clone)]
 pub struct Theme {
     pub background:    Color,
     pub foreground:    Color,
     pub accent:        Color,
-    /// Font family name (e.g. `"JetBrains Mono"`).
     pub font_name:     String,
     pub font_size:     f32,
     pub border_radius: f32,
     pub padding:       u16,
     pub gap:           u16,
-    /// Bar background.  `None` = fully transparent (wallpaper shows through).
-    pub bar_bg:        Option<Color>,
-    /// Widget container background.  `None` = transparent (no per-widget bg).
+    /// Widget container background.  `None` = transparent.
     pub widget_bg:     Option<Color>,
     /// Widget container border color.
     pub widget_border_color: Color,
     /// Widget container border width in logical pixels (0 = no border).
     pub widget_border_width: u32,
-    /// Bar border color (used when `border_width > 0`).
-    pub border_color:  Color,
-    /// Bar border width in logical pixels.
-    pub border_width:  u32,
     /// `strftime` format string for the clock time display.
     pub clock_format:  String,
     /// `strftime` format string for the clock date display.
@@ -44,26 +33,10 @@ pub struct Theme {
     pub widget_pad_x:  u16,
     /// Vertical inner padding applied inside each widget pill container.
     pub widget_pad_y:  u16,
-    /// When `true`, the workspace widget uses dots (●/○) instead of numbers.
-    pub workspace_dots:     bool,
-    /// When `true`, all open workspaces are shown; `false` = active only.
-    pub workspace_show_all: bool,
-    /// Show ↓rx ↑tx speed in the network widget.
-    pub network_show_speed:  bool,
-    /// Show the primary interface name (e.g. `wlan0`) in the network widget.
-    pub network_show_name:   bool,
-    /// Show WiFi signal strength in the network widget.
-    pub network_show_signal: bool,
-    /// Show an interactive drag slider in the volume widget.
-    pub volume_show_slider:     bool,
-    /// Show an interactive drag slider in the brightness widget.
-    pub brightness_show_slider: bool,
     /// When `true`, the clock widget appends seconds to the time display.
     pub clock_show_seconds: bool,
     /// Battery percent at which the battery icon switches to a low-power glyph.
     pub battery_warn_percent: u8,
-    /// Show tiny window-count dots below each workspace indicator.
-    pub workspace_show_counts: bool,
     /// Visual style for power menu buttons: `"icon_label"`, `"icon_only"`, or `"pill"`.
     pub power_button_style: String,
 }
@@ -80,11 +53,6 @@ impl Theme {
             border_radius: cfg.border_radius,
             padding:       cfg.padding,
             gap:           cfg.gap,
-            bar_bg: if cfg.background.is_empty() {
-                None
-            } else {
-                Color::from_hex(&cfg.background)
-            },
             widget_bg: if cfg.widget_bg.is_empty() {
                 None
             } else {
@@ -93,24 +61,14 @@ impl Theme {
             widget_border_color: Color::from_hex(&cfg.widget_border_color)
                 .unwrap_or(Color::DARK),
             widget_border_width: cfg.widget_border_width,
-            border_color: Color::from_hex(&cfg.border_color).unwrap_or(Color::DARK),
-            border_width: cfg.border_width,
-            clock_format:   cfg.clock_format.clone(),
-            date_format:    cfg.date_format.clone(),
-            use_nerd_icons:     cfg.icon_style.to_lowercase() != "ascii",
-            widget_pad_x:       cfg.widget_padding_x,
-            widget_pad_y:       cfg.widget_padding_y,
-            workspace_dots:     cfg.workspace_style.to_lowercase() == "dots",
-            workspace_show_all: cfg.workspace_show_all,
-            network_show_speed:  cfg.network_show.contains("speed"),
-            network_show_name:   cfg.network_show.contains("name"),
-            network_show_signal: cfg.network_show.contains("signal"),
-            volume_show_slider:     cfg.volume_show_slider,
-            brightness_show_slider: cfg.brightness_show_slider,
-            clock_show_seconds:     cfg.clock_show_seconds,
-            battery_warn_percent:   cfg.battery_warn_percent,
-            workspace_show_counts:  cfg.workspace_show_counts,
-            power_button_style:     cfg.power_button_style.clone(),
+            clock_format:        cfg.clock_format.clone(),
+            date_format:         cfg.date_format.clone(),
+            use_nerd_icons:      cfg.icon_style.to_lowercase() != "ascii",
+            widget_pad_x:        cfg.widget_padding_x,
+            widget_pad_y:        cfg.widget_padding_y,
+            clock_show_seconds:  cfg.clock_show_seconds,
+            battery_warn_percent: cfg.battery_warn_percent,
+            power_button_style:  cfg.power_button_style.clone(),
         }
     }
 }
