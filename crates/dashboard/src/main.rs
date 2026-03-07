@@ -642,30 +642,11 @@ impl Dashboard {
             .spacing(gap)
             .align_x(Alignment::Center);
 
-        // Close button — top-right corner of the modal
-        let close_btn: Element<'_, Message> = {
-            let col = Color { a: 0.45, ..fg };
-            iced::widget::button(text("✕").size(fsize - 1.0).color(col))
-                .on_press(Message::Dismiss)
-                .padding([4, 10])
-                .style(|_: &iced::Theme, _| iced::widget::button::Style {
-                    background: None, ..Default::default()
-                })
-                .into()
-        };
-
-        let header: Element<'_, Message> = row![
-            iced::widget::Space::new().width(Length::Fill),
-            close_btn,
-        ]
-        .width(Length::Fill)
-        .into();
-
         let hint_col = Color { a: 0.38, ..fg };
         let hint = text("Esc to close").size(fsize - 2.0).color(hint_col);
 
         container(
-            column![header, grid, hint].spacing(16.0).align_x(Alignment::Center),
+            column![grid, hint].spacing(16.0).align_x(Alignment::Center),
         )
         .width(Length::Fill).height(Length::Fill)
         .align_x(Alignment::Center).align_y(Alignment::Center)
