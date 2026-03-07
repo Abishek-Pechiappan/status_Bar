@@ -14,6 +14,9 @@ lock_command    = "loginctl lock-session"   # command run when "Lock" is chosen
 power_menu_style = "overlay"   # "overlay" (bento grid popup) | "dropdown" | "inline"
 power_anim_style = "slide"     # "slide" | "fade" | "scale" | "none"
 power_actions   = ["lock", "sleep", "hibernate", "logout", "reboot", "shutdown"]
+# Weather location for the dashboard weather card (city name, or "lat,lon").
+# Leave empty to hide the weather card entirely.
+weather_location = ""          # e.g. "London" or "New York" or "48.8566,2.3522"
 
 # ── Widget layout ─────────────────────────────────────────────────────────────
 # Three sections: left · center · right
@@ -84,3 +87,23 @@ border_width = 0           # bar border width in px
 clock_format = "%H:%M"     # strftime format for time
 date_format  = "%a %d %b"  # strftime format for date
 power_button_style = "icon_label"  # "icon_label" | "icon_only" | "pill"
+
+# ── Dashboard (bar-dashboard bento overlay) ───────────────────────────────────
+[dashboard]
+enabled = true
+theme   = "cards"   # "minimal" | "cards" | "full" | "vivid"
+columns = 3         # 2–4 columns in the bento grid
+
+# Cards to display — order determines layout position.
+# Available: clock, network, battery, cpu, memory, disk, volume, brightness,
+#            media, power, uptime, temperature, updates,
+#            swap, load, gpu, bluetooth, weather
+items = [
+    "clock", "network", "battery",
+    "cpu", "memory", "disk",
+    "volume", "brightness", "uptime",
+    "temperature", "updates", "swap",
+    "load", "gpu", "bluetooth",
+    "media", "power",
+    # "weather",   # uncomment and set weather_location in [global] to enable
+]

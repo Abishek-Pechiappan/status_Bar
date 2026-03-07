@@ -8,7 +8,7 @@ use bar_config::{default_path, load as load_config, schema::DashboardConfig};
 use bar_theme::Theme;
 use futures::channel::mpsc::Sender;
 use iced::{
-    widget::{column, container, row, text},
+    widget::{canvas, column, container, row, text},
     Alignment, Background, Border, Color, Element, Length, Subscription, Task,
 };
 use iced_layershell::{
@@ -17,7 +17,7 @@ use iced_layershell::{
     settings::{LayerShellSettings, Settings},
     to_layer_message,
 };
-use std::time::Duration;
+use std::{collections::VecDeque, time::Duration};
 
 // ── Entry point ───────────────────────────────────────────────────────────────
 
@@ -59,9 +59,13 @@ struct DashSnapshot {
     cpu_pct:          f32,
     ram_used:         u64,
     ram_total:        u64,
+    swap_used:        u64,
+    swap_total:       u64,
     disk_used:        u64,
     disk_total:       u64,
     net_iface:        String,
+    net_rx_bps:       u64,
+    net_tx_bps:       u64,
     volume:           Option<f32>,
     volume_muted:     bool,
     brightness:       Option<u8>,
@@ -73,56 +77,118 @@ struct DashSnapshot {
     media_artist:     Option<String>,
     media_playing:    bool,
     update_count:     Option<u32>,
+    load_1:           f32,
+    load_5:           f32,
+    load_15:          f32,
+    gpu_percent:      Option<f32>,
+    gpu_temp:         Option<f32>,
+    gpu_mem_used:     Option<u64>,
+    gpu_mem_total:    Option<u64>,
+    bt_connected:     bool,
+    bt_device_name:   Option<String>,
+    weather_text:     String,
+    // Rolling history buffers — capped at 60 samples (~2 min at 2s poll)
+    cpu_history:      VecDeque<f32>,
+    net_rx_history:   VecDeque<f32>,
 }
 
-async fn read_sys_snapshot() -> DashSnapshot {
+async fn read_sys_snapshot(weather_location: String) -> DashSnapshot {
     // Heavy sysinfo work in a blocking thread — CPU needs 150ms between samples.
-    let (cpu_pct, ram_used, ram_total, disk_used, disk_total, net_iface, uptime_secs, temp_celsius) =
-        tokio::task::spawn_blocking(|| {
-            use sysinfo::System;
-            let mut sys = System::new();
-            sys.refresh_cpu_all();
-            std::thread::sleep(Duration::from_millis(150));
-            sys.refresh_cpu_all();
-            sys.refresh_memory();
+    // Heavy sysinfo work in a blocking thread — CPU needs 150ms between samples.
+    // Split into two smaller tuples (Rust Default only supports tuples up to 12).
+    struct SysInfo {
+        cpu_pct:    f32,
+        ram_used:   u64,
+        ram_total:  u64,
+        swap_used:  u64,
+        swap_total: u64,
+        disk_used:  u64,
+        disk_total: u64,
+        net_iface:  String,
+        net_rx_bps: u64,
+        net_tx_bps: u64,
+        uptime_secs: u64,
+        temp_celsius: Option<f32>,
+        load_1:     f32,
+        load_5:     f32,
+        load_15:    f32,
+    }
 
-            let cpu_pct   = sys.global_cpu_usage();
-            let ram_used  = sys.used_memory();
-            let ram_total = sys.total_memory();
-            let uptime    = System::uptime();
+    let info = tokio::task::spawn_blocking(|| {
+        use sysinfo::System;
+        let mut sys = System::new();
+        sys.refresh_cpu_all();
+        std::thread::sleep(Duration::from_millis(150));
+        sys.refresh_cpu_all();
+        sys.refresh_memory();
 
-            let disks = sysinfo::Disks::new_with_refreshed_list();
-            let (disk_used, disk_total) = disks.iter()
-                .find(|d| d.mount_point() == std::path::Path::new("/"))
-                .map(|d| (d.total_space() - d.available_space(), d.total_space()))
-                .unwrap_or((0, 1));
+        let cpu_pct    = sys.global_cpu_usage();
+        let ram_used   = sys.used_memory();
+        let ram_total  = sys.total_memory();
+        let swap_used  = sys.used_swap();
+        let swap_total = sys.total_swap();
+        let uptime     = System::uptime();
 
-            let nets = sysinfo::Networks::new_with_refreshed_list();
-            let net_iface = nets.iter()
-                .find(|(n, _)| {
-                    let n = n.as_str();
-                    !n.starts_with("lo") && !n.starts_with("docker")
-                        && !n.starts_with("virbr") && !n.starts_with("br-")
-                })
-                .map(|(n, _)| n.clone())
-                .unwrap_or_default();
+        let load = System::load_average();
 
-            let comps = sysinfo::Components::new_with_refreshed_list();
-            let temp = comps.iter()
-                .find(|c| {
-                    let l = c.label().to_lowercase();
-                    l.contains("core 0") || l.contains("cpu temp")
-                        || l.contains("tdie") || l.contains("package id")
-                })
-                .and_then(|c| c.temperature());
+        let disks = sysinfo::Disks::new_with_refreshed_list();
+        let (disk_used, disk_total) = disks.iter()
+            .find(|d| d.mount_point() == std::path::Path::new("/"))
+            .map(|d| (d.total_space() - d.available_space(), d.total_space()))
+            .unwrap_or((0, 1));
 
-            (cpu_pct, ram_used, ram_total, disk_used, disk_total, net_iface, uptime, temp)
-        })
-        .await
-        .unwrap_or_default();
+        // Network: sample twice with a short delay to get rate
+        let mut nets = sysinfo::Networks::new_with_refreshed_list();
+        std::thread::sleep(Duration::from_millis(200));
+        nets.refresh(true);
+        let (net_iface, net_rx_bps, net_tx_bps) = nets.iter()
+            .find(|(n, _)| {
+                let n = n.as_str();
+                !n.starts_with("lo") && !n.starts_with("docker")
+                    && !n.starts_with("virbr") && !n.starts_with("br-")
+            })
+            .map(|(n, d)| (n.clone(), d.received(), d.transmitted()))
+            .unwrap_or_else(|| (String::new(), 0, 0));
+
+        let comps = sysinfo::Components::new_with_refreshed_list();
+        let temp = comps.iter()
+            .find(|c| {
+                let l = c.label().to_lowercase();
+                l.contains("core 0") || l.contains("cpu temp")
+                    || l.contains("tdie") || l.contains("package id")
+            })
+            .and_then(|c| c.temperature());
+
+        SysInfo {
+            cpu_pct, ram_used, ram_total,
+            swap_used, swap_total,
+            disk_used, disk_total,
+            net_iface, net_rx_bps, net_tx_bps,
+            uptime_secs: uptime, temp_celsius: temp,
+            load_1: load.one as f32, load_5: load.five as f32, load_15: load.fifteen as f32,
+        }
+    })
+    .await
+    .unwrap_or_else(|_| SysInfo {
+        cpu_pct: 0.0, ram_used: 0, ram_total: 0,
+        swap_used: 0, swap_total: 0,
+        disk_used: 0, disk_total: 1,
+        net_iface: String::new(), net_rx_bps: 0, net_tx_bps: 0,
+        uptime_secs: 0, temp_celsius: None,
+        load_1: 0.0, load_5: 0.0, load_15: 0.0,
+    });
+
+    let SysInfo {
+        cpu_pct, ram_used, ram_total,
+        swap_used, swap_total,
+        disk_used, disk_total,
+        net_iface, net_rx_bps, net_tx_bps,
+        uptime_secs, temp_celsius,
+        load_1, load_5, load_15,
+    } = info;
 
     // Parallel async reads for everything else.
-    let (vol_out, bright, bat, title_out, artist_out, status_out, upd_out) = tokio::join!(
+    let (vol_out, bright, bat, title_out, artist_out, status_out, upd_out, gpu_out, bt_out, weather_out) = tokio::join!(
         tokio::process::Command::new("wpctl")
             .args(["get-volume", "@DEFAULT_AUDIO_SINK@"])
             .output(),
@@ -138,6 +204,9 @@ async fn read_sys_snapshot() -> DashSnapshot {
             .args(["status"])
             .output(),
         tokio::process::Command::new("checkupdates").output(),
+        read_gpu(),
+        read_bluetooth(),
+        read_weather(weather_location),
     );
 
     // Volume: "Volume: 0.60" or "Volume: 0.60 [MUTED]"
@@ -175,11 +244,27 @@ async fn read_sys_snapshot() -> DashSnapshot {
             .count() as u32
     });
 
+    let (gpu_percent, gpu_temp, gpu_mem_used, gpu_mem_total) = gpu_out;
+
+    let (bt_connected, bt_device_name) = bt_out;
+
+    let weather_text = weather_out;
+
     DashSnapshot {
-        cpu_pct, ram_used, ram_total, disk_used, disk_total,
-        net_iface, volume, volume_muted, brightness: bright,
+        cpu_pct, ram_used, ram_total,
+        swap_used, swap_total,
+        disk_used, disk_total,
+        net_iface, net_rx_bps, net_tx_bps,
+        volume, volume_muted, brightness: bright,
         battery_pct, battery_charging, uptime_secs, temp_celsius,
         media_title, media_artist, media_playing, update_count,
+        load_1, load_5, load_15,
+        gpu_percent, gpu_temp, gpu_mem_used, gpu_mem_total,
+        bt_connected, bt_device_name,
+        weather_text,
+        // History buffers start empty — populated by Dashboard::merge_snapshot
+        cpu_history: VecDeque::new(),
+        net_rx_history: VecDeque::new(),
     }
 }
 
@@ -218,6 +303,164 @@ async fn read_brightness() -> Option<u8> {
     None
 }
 
+/// Try nvidia-smi first, then radeontop (AMD) for GPU stats.
+async fn read_gpu() -> (Option<f32>, Option<f32>, Option<u64>, Option<u64>) {
+    // Try nvidia-smi
+    if let Ok(out) = tokio::process::Command::new("nvidia-smi")
+        .args(["--query-gpu=utilization.gpu,temperature.gpu,memory.used,memory.total",
+               "--format=csv,noheader,nounits"])
+        .output()
+        .await
+    {
+        if out.status.success() {
+            let s = String::from_utf8_lossy(&out.stdout);
+            let parts: Vec<&str> = s.trim().split(',').map(str::trim).collect();
+            if parts.len() == 4 {
+                let pct  = parts[0].parse::<f32>().ok();
+                let temp = parts[1].parse::<f32>().ok();
+                let used  = parts[2].parse::<u64>().ok().map(|m| m * 1_048_576);
+                let total = parts[3].parse::<u64>().ok().map(|m| m * 1_048_576);
+                return (pct, temp, used, total);
+            }
+        }
+    }
+
+    // Try AMD via reading sysfs
+    let amdgpu_path = std::path::Path::new("/sys/class/drm/card0/device");
+    let gpu_pct = tokio::fs::read_to_string(amdgpu_path.join("gpu_busy_percent"))
+        .await.ok()
+        .and_then(|s| s.trim().parse::<f32>().ok());
+
+    let gpu_temp = tokio::fs::read_to_string(amdgpu_path.join("hwmon/hwmon0/temp1_input"))
+        .await.ok()
+        .and_then(|s| s.trim().parse::<f32>().ok())
+        .map(|m| m / 1000.0); // millidegrees to degrees
+
+    (gpu_pct, gpu_temp, None, None)
+}
+
+/// Query bluetooth via bluetoothctl.
+async fn read_bluetooth() -> (bool, Option<String>) {
+    let out = tokio::process::Command::new("bluetoothctl")
+        .args(["info"])
+        .output()
+        .await;
+
+    if let Ok(o) = out {
+        let s = String::from_utf8_lossy(&o.stdout);
+        if s.contains("Connected: yes") {
+            let name = s.lines()
+                .find(|l| l.trim_start().starts_with("Name:"))
+                .map(|l| l.trim_start().trim_start_matches("Name:").trim().to_string());
+            return (true, name);
+        }
+    }
+    (false, None)
+}
+
+/// Fetch weather from wttr.in using curl — no new dependency.
+async fn read_weather(location: String) -> String {
+    if location.is_empty() {
+        return String::new();
+    }
+    let url = format!("https://wttr.in/{location}?format=3");
+    let out = tokio::process::Command::new("curl")
+        .args(["--silent", "--max-time", "5", &url])
+        .output()
+        .await;
+
+    out.ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_default()
+}
+
+// ── Sparkline canvas ──────────────────────────────────────────────────────────
+
+/// A mini sparkline chart rendered via iced canvas.
+struct Sparkline<'a> {
+    history:   &'a VecDeque<f32>,
+    color:     Color,
+    width:     f32,
+    height:    f32,
+}
+
+impl<'a> canvas::Program<Message> for Sparkline<'a> {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &(),
+        renderer: &iced::Renderer,
+        _theme: &iced::Theme,
+        bounds: iced::Rectangle,
+        _cursor: iced::mouse::Cursor,
+    ) -> Vec<canvas::Geometry> {
+        let _ = (renderer, self.width, self.height); // suppress unused warnings
+        if self.history.len() < 2 {
+            return vec![];
+        }
+
+        let mut frame = canvas::Frame::new(renderer, bounds.size());
+        let w = bounds.width;
+        let h = bounds.height;
+        let n = self.history.len() as f32;
+
+        // Find max for normalization — always at least 1.0 to avoid div/zero
+        let max_val = self.history.iter().cloned().fold(1.0_f32, f32::max);
+
+        let x_step = w / (n - 1.0);
+
+        // Build path for filled area under sparkline
+        let mut path_builder = canvas::path::Builder::new();
+
+        // Start at bottom-left
+        path_builder.move_to(iced::Point::new(0.0, h));
+
+        // Draw each data point
+        for (i, &val) in self.history.iter().enumerate() {
+            let x = i as f32 * x_step;
+            let y = h - (val / max_val * h).clamp(0.0, h);
+            path_builder.line_to(iced::Point::new(x, y));
+        }
+
+        // Close back to bottom-right then bottom-left
+        let last_x = (self.history.len() - 1) as f32 * x_step;
+        path_builder.line_to(iced::Point::new(last_x, h));
+        path_builder.close();
+
+        let fill_color = Color { a: 0.30, ..self.color };
+        frame.fill(&path_builder.build(), canvas::Fill {
+            style: canvas::Style::Solid(fill_color),
+            ..Default::default()
+        });
+
+        // Draw the line on top
+        let mut line_builder = canvas::path::Builder::new();
+        for (i, &val) in self.history.iter().enumerate() {
+            let x = i as f32 * x_step;
+            let y = h - (val / max_val * h).clamp(0.0, h);
+            if i == 0 {
+                line_builder.move_to(iced::Point::new(x, y));
+            } else {
+                line_builder.line_to(iced::Point::new(x, y));
+            }
+        }
+        let line_color = Color { a: 0.85, ..self.color };
+        frame.stroke(
+            &line_builder.build(),
+            canvas::Stroke {
+                style: canvas::Style::Solid(line_color),
+                width: 1.5,
+                ..Default::default()
+            },
+        );
+
+        vec![frame.into_geometry()]
+    }
+}
+
 // ── Message ───────────────────────────────────────────────────────────────────
 
 #[to_layer_message]
@@ -236,26 +479,32 @@ enum Message {
 // ── State ─────────────────────────────────────────────────────────────────────
 
 struct Dashboard {
-    theme:        Theme,
-    dash_config:  DashboardConfig,
-    lock_command: String,
-    sys:          DashSnapshot,
-    eq_tick:      u64,
+    theme:            Theme,
+    dash_config:      DashboardConfig,
+    lock_command:     String,
+    weather_location: String,
+    sys:              DashSnapshot,
+    eq_tick:          u64,
 }
 
 impl Dashboard {
     fn new() -> (Self, Task<Message>) {
-        let config       = load_config(default_path()).unwrap_or_default();
-        let theme        = Theme::from_config(&config.theme);
-        let dash_config  = config.dashboard.clone();
-        let lock_command = config.global.lock_command.clone();
+        let config           = load_config(default_path()).unwrap_or_default();
+        let theme            = Theme::from_config(&config.theme);
+        let dash_config      = config.dashboard.clone();
+        let lock_command     = config.global.lock_command.clone();
+        let weather_location = config.global.weather_location.clone();
 
+        let loc = weather_location.clone();
         let dash = Self {
-            theme, dash_config, lock_command,
+            theme, dash_config, lock_command, weather_location,
             sys: DashSnapshot::default(),
             eq_tick: 0,
         };
-        let task = Task::perform(async { read_sys_snapshot().await }, Message::SysReady);
+        let task = Task::perform(
+            async move { read_sys_snapshot(loc).await },
+            Message::SysReady,
+        );
         (dash, task)
     }
 
@@ -263,9 +512,29 @@ impl Dashboard {
         "bar-dashboard".to_string()
     }
 
+    /// Merge a fresh snapshot into `self.sys` — preserving the rolling history buffers.
+    fn merge_snapshot(&mut self, mut snap: DashSnapshot) {
+        const MAX_HISTORY: usize = 60;
+
+        // Carry over the existing history from the stored snapshot
+        let mut cpu_hist = std::mem::take(&mut self.sys.cpu_history);
+        let mut rx_hist  = std::mem::take(&mut self.sys.net_rx_history);
+
+        cpu_hist.push_back(snap.cpu_pct);
+        if cpu_hist.len() > MAX_HISTORY { cpu_hist.pop_front(); }
+
+        rx_hist.push_back(snap.net_rx_bps as f32);
+        if rx_hist.len() > MAX_HISTORY { rx_hist.pop_front(); }
+
+        snap.cpu_history    = cpu_hist;
+        snap.net_rx_history = rx_hist;
+
+        self.sys = snap;
+    }
+
     fn update(&mut self, msg: Message) -> Task<Message> {
         match msg {
-            Message::SysReady(snap) => { self.sys = snap; }
+            Message::SysReady(snap) => { self.merge_snapshot(snap); }
             Message::Dismiss => std::process::exit(0),
             Message::KeyEvent(iced::keyboard::Event::KeyPressed { key, .. }) => {
                 if key == iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) {
@@ -326,10 +595,6 @@ impl Dashboard {
     // ── View ──────────────────────────────────────────────────────────────────
 
     fn view(&self) -> Element<'_, Message> {
-        // prog is always 1.0 — no entrance fade.
-        // (Animated value caused the window to open fully transparent and
-        //  the AnimFrame ticker never started, making it invisible until the
-        //  first SysReady fired 2 s later.)
         let prog  = 1.0f32;
         let t     = &self.theme;
         let fg    = t.foreground.to_iced();
@@ -399,8 +664,6 @@ impl Dashboard {
         let hint_col = Color { a: 0.38, ..fg };
         let hint = text("Esc to close").size(fsize - 2.0).color(hint_col);
 
-        // Cards float directly on the dimmed overlay — no surrounding modal box.
-        // Use the ✕ button or Escape to close.
         container(
             column![header, grid, hint].spacing(16.0).align_x(Alignment::Center),
         )
@@ -430,19 +693,17 @@ impl Dashboard {
             _                => (160.0f32, 108.0f32),
         };
         let gap = 14.0f32;
-        // Wide cards span 2 columns; height grows for content-rich cards
         let card_w = if span >= 2 { base_w * span as f32 + gap * (span - 1) as f32 } else { base_w };
         let card_h = match item {
             "clock" | "media" => base_h * 1.25,
-            _ => base_h,
+            "load"            => base_h * 1.10,
+            _                 => base_h,
         };
 
-        // Semi-transparent card background so text stays readable over the overlay
         let bg_iced = t.background.to_iced();
         let card_bg = Color { a: 0.60, ..bg_iced };
         let bar_w = card_w - 44.0;
 
-        // Build content + get the card's semantic accent color
         let (inner, card_color): (Element<'_, Message>, Color) = match item {
 
             // ── Clock ─────────────────────────────────────────────────────────
@@ -472,16 +733,40 @@ impl Dashboard {
                     self.sys.net_iface.clone()
                 };
                 let icon = if nerd { "\u{f05a9}" } else { "NET" };
+                let rx_str = format!("↓ {}", fmt_bytes(self.sys.net_rx_bps));
+                let tx_str = format!("↑ {}", fmt_bytes(self.sys.net_tx_bps));
+
                 let content: Element<'_, Message> = if theme == "minimal" {
                     row![
                         text(icon).size(fsize).color(blue),
                         text(iface).size(fsize - 1.0).color(fg),
                     ].spacing(6.0).align_y(Alignment::Center).into()
+                } else if theme == "full" || theme == "vivid" {
+                    let spark: Element<'_, Message> = if self.sys.net_rx_history.len() >= 2 {
+                        canvas(Sparkline {
+                            history: &self.sys.net_rx_history,
+                            color:   blue,
+                            width:   bar_w,
+                            height:  28.0,
+                        })
+                        .width(Length::Fixed(bar_w))
+                        .height(Length::Fixed(28.0))
+                        .into()
+                    } else {
+                        iced::widget::Space::new().height(Length::Fixed(28.0)).into()
+                    };
+                    column![
+                        text(icon).size(fsize + 10.0).color(blue),
+                        text(iface).size(fsize - 1.0).color(fg),
+                        text(rx_str).size(fsize - 2.5).color(Color { a: 0.65, ..fg }),
+                        text(tx_str).size(fsize - 2.5).color(Color { a: 0.65, ..fg }),
+                        spark,
+                    ].spacing(4.0).align_x(Alignment::Center).into()
                 } else {
                     column![
                         text(icon).size(fsize + 10.0).color(blue),
                         text(iface).size(fsize - 1.0).color(fg),
-                        text("Connected").size(fsize - 2.5).color(Color { a: 0.45, ..fg }),
+                        text(rx_str).size(fsize - 2.5).color(Color { a: 0.45, ..fg }),
                     ].spacing(4.0).align_x(Alignment::Center).into()
                 };
                 (content, blue)
@@ -489,7 +774,7 @@ impl Dashboard {
 
             // ── Battery ───────────────────────────────────────────────────────
             "battery" => {
-                let pct = self.sys.battery_pct?;  // hide card if no battery
+                let pct = self.sys.battery_pct?;
                 let charging = self.sys.battery_charging;
                 let warn = t.battery_warn_percent;
                 let fill_col = if charging {
@@ -501,9 +786,7 @@ impl Dashboard {
                 };
                 let icon = if charging {
                     if nerd { "\u{f0e7}" } else { "⚡" }
-                } else {
-                    if nerd { "\u{f0079}" } else { "BAT" }
-                };
+                } else if nerd { "\u{f0079}" } else { "BAT" };
                 let frac = pct as f32 / 100.0;
                 let pct_str = format!("{pct}%");
                 let content: Element<'_, Message> = if theme == "minimal" {
@@ -531,11 +814,32 @@ impl Dashboard {
                 );
                 let icon = if nerd { "\u{f4bc}" } else { "CPU" };
                 let val  = format!("{:.0}%", self.sys.cpu_pct);
+
                 let content: Element<'_, Message> = if theme == "minimal" {
                     row![
                         text(icon).size(fsize).color(cpu_col),
                         text(val).size(fsize).color(fg),
                     ].spacing(6.0).align_y(Alignment::Center).into()
+                } else if theme == "full" || theme == "vivid" {
+                    let spark: Element<'_, Message> = if self.sys.cpu_history.len() >= 2 {
+                        canvas(Sparkline {
+                            history: &self.sys.cpu_history,
+                            color:   cpu_col,
+                            width:   bar_w,
+                            height:  28.0,
+                        })
+                        .width(Length::Fixed(bar_w))
+                        .height(Length::Fixed(28.0))
+                        .into()
+                    } else {
+                        iced::widget::Space::new().height(Length::Fixed(28.0)).into()
+                    };
+                    column![
+                        text(icon).size(fsize + 10.0).color(cpu_col),
+                        text(val).size(fsize).color(fg),
+                        self.mini_bar(frac, cpu_col, fg, bar_w),
+                        spark,
+                    ].spacing(4.0).align_x(Alignment::Center).into()
                 } else {
                     column![
                         text(icon).size(fsize + 10.0).color(cpu_col),
@@ -569,6 +873,113 @@ impl Dashboard {
                 (content, mem_col)
             }
 
+            // ── Swap ──────────────────────────────────────────────────────────
+            "swap" => {
+                if self.sys.swap_total == 0 { return None; }
+                let frac = self.sys.swap_used as f32 / self.sys.swap_total as f32;
+                let swap_col = Color::from_rgba(0.96, 0.69, 0.98, prog); // Catppuccin — flamingo-ish
+                let icon = if nerd { "\u{f0552}" } else { "SWP" }; // nf-md-swap_horizontal
+                let val  = format!("{} / {}", fmt_bytes(self.sys.swap_used), fmt_bytes(self.sys.swap_total));
+                let content: Element<'_, Message> = if theme == "minimal" {
+                    row![
+                        text(icon).size(fsize).color(swap_col),
+                        text(val).size(fsize - 1.0).color(fg),
+                    ].spacing(6.0).align_y(Alignment::Center).into()
+                } else {
+                    column![
+                        text(icon).size(fsize + 10.0).color(swap_col),
+                        text("Swap").size(fsize - 2.5).color(Color { a: 0.45, ..fg }),
+                        text(val).size(fsize - 1.0).color(fg),
+                        self.mini_bar(frac, swap_col, fg, bar_w),
+                    ].spacing(4.0).align_x(Alignment::Center).into()
+                };
+                (content, swap_col)
+            }
+
+            // ── Load average ──────────────────────────────────────────────────
+            "load" => {
+                let load_col = Color::from_rgba(0.98, 0.81, 0.68, prog); // peach
+                let icon = if nerd { "\u{f080}" } else { "LOAD" }; // nf-fa-bar_chart
+                let l1  = format!("{:.2}", self.sys.load_1);
+                let l5  = format!("{:.2}", self.sys.load_5);
+                let l15 = format!("{:.2}", self.sys.load_15);
+                let muted = Color { a: 0.50, ..fg };
+
+                let content: Element<'_, Message> = if theme == "minimal" {
+                    row![
+                        text(icon).size(fsize).color(load_col),
+                        text(l1.clone()).size(fsize).color(fg),
+                    ].spacing(6.0).align_y(Alignment::Center).into()
+                } else {
+                    column![
+                        text(icon).size(fsize + 10.0).color(load_col),
+                        text("Load avg").size(fsize - 2.5).color(muted),
+                        row![
+                            column![
+                                text("1m").size(fsize - 3.0).color(muted),
+                                text(l1).size(fsize - 0.5).color(fg),
+                            ].align_x(Alignment::Center).spacing(2.0),
+                            column![
+                                text("5m").size(fsize - 3.0).color(muted),
+                                text(l5).size(fsize - 0.5).color(fg),
+                            ].align_x(Alignment::Center).spacing(2.0),
+                            column![
+                                text("15m").size(fsize - 3.0).color(muted),
+                                text(l15).size(fsize - 0.5).color(fg),
+                            ].align_x(Alignment::Center).spacing(2.0),
+                        ].spacing(12.0).align_y(Alignment::Center),
+                    ].spacing(6.0).align_x(Alignment::Center).into()
+                };
+                (content, load_col)
+            }
+
+            // ── GPU ───────────────────────────────────────────────────────────
+            "gpu" => {
+                let pct = self.sys.gpu_percent?;
+                let frac = pct / 100.0;
+                let gpu_col = Color::from_rgba(0.54, 0.87, 0.75, prog); // teal-ish
+                let icon = if nerd { "\u{f071b}" } else { "GPU" }; // nf-md-gpu
+
+                let pct_str  = format!("{pct:.0}%");
+                let temp_str = self.sys.gpu_temp
+                    .map(|t| format!("{t:.0}°C"))
+                    .unwrap_or_default();
+                let mem_str = match (self.sys.gpu_mem_used, self.sys.gpu_mem_total) {
+                    (Some(u), Some(t)) if t > 0 => {
+                        format!("{} / {}", fmt_bytes(u), fmt_bytes(t))
+                    }
+                    _ => String::new(),
+                };
+                let muted = Color { a: 0.50, ..fg };
+
+                let content: Element<'_, Message> = if theme == "minimal" {
+                    row![
+                        text(icon).size(fsize).color(gpu_col),
+                        text(pct_str.clone()).size(fsize).color(fg),
+                    ].spacing(6.0).align_y(Alignment::Center).into()
+                } else {
+                    let mut items: Vec<Element<'_, Message>> = vec![
+                        text(icon).size(fsize + 10.0).color(gpu_col).into(),
+                        text("GPU").size(fsize - 2.5).color(muted).into(),
+                        text(pct_str).size(fsize).color(fg).into(),
+                        self.mini_bar(frac, gpu_col, fg, bar_w),
+                    ];
+                    if !temp_str.is_empty() {
+                        items.push(
+                            text(temp_str).size(fsize - 2.5).color(muted).into()
+                        );
+                    }
+                    if !mem_str.is_empty() {
+                        items.push(
+                            text(mem_str).size(fsize - 2.5).color(muted).into()
+                        );
+                    }
+                    iced::widget::Column::from_vec(items)
+                        .spacing(4.0).align_x(Alignment::Center).into()
+                };
+                (content, gpu_col)
+            }
+
             // ── Disk ──────────────────────────────────────────────────────────
             "disk" => {
                 let frac = if self.sys.disk_total > 0 {
@@ -599,9 +1010,7 @@ impl Dashboard {
                 let vol_col = Color::from_rgba(0.58, 0.89, 0.84, prog);
                 let icon = if self.sys.volume_muted {
                     if nerd { "\u{f075f}" } else { "M" }
-                } else {
-                    if nerd { "\u{f057e}" } else { "V" }
-                };
+                } else if nerd { "\u{f057e}" } else { "V" };
                 let val = format!("{:.0}%", vol * 100.0);
                 let vol_cap = vol_col;
                 let fg_cap  = fg;
@@ -699,9 +1108,7 @@ impl Dashboard {
                 let pink = Color::from_rgba(0.96, 0.54, 0.84, prog);
                 let play_icon = if nerd {
                     if self.sys.media_playing { "\u{f03e4}" } else { "\u{f040a}" }
-                } else {
-                    if self.sys.media_playing { "⏸" } else { "▶" }
-                };
+                } else if self.sys.media_playing { "⏸" } else { "▶" };
                 let prev_icon = if nerd { "\u{f0602}" } else { "⏮" };
                 let next_icon = if nerd { "\u{f0604}" } else { "⏭" };
 
@@ -711,7 +1118,6 @@ impl Dashboard {
 
                 let artist = self.sys.media_artist.as_deref().unwrap_or("").to_string();
 
-                // Equalizer bars — animated when playing
                 let eq: Element<'_, Message> = if self.sys.media_playing && theme != "minimal" {
                     let tick = self.eq_tick as f32;
                     let pink_cap = pink;
@@ -883,7 +1289,7 @@ impl Dashboard {
                 let val = match self.sys.update_count {
                     Some(0) => "Up to date".to_string(),
                     Some(n) => format!("{n} updates"),
-                    None    => "Checking…".to_string(),
+                    None    => "Checking\u{2026}".to_string(),
                 };
                 let content: Element<'_, Message> = if theme == "minimal" {
                     row![
@@ -898,6 +1304,88 @@ impl Dashboard {
                     ].spacing(4.0).align_x(Alignment::Center).into()
                 };
                 (content, yellow)
+            }
+
+            // ── Bluetooth ─────────────────────────────────────────────────────
+            "bluetooth" => {
+                let bt_col = Color::from_rgba(0.49, 0.72, 0.97, prog); // Catppuccin blue
+                let icon = if nerd { "\u{f00af}" } else { "BT" }; // nf-md-bluetooth
+                let (status_str, device_str) = if self.sys.bt_connected {
+                    let dev = self.sys.bt_device_name.as_deref()
+                        .unwrap_or("Connected");
+                    let dev_trunc = if dev.len() > 14 { &dev[..14] } else { dev };
+                    ("Connected".to_string(), dev_trunc.to_string())
+                } else {
+                    ("Disconnected".to_string(), String::new())
+                };
+                let status_col = if self.sys.bt_connected { bt_col } else {
+                    Color { a: 0.40, ..fg }
+                };
+                let content: Element<'_, Message> = if theme == "minimal" {
+                    row![
+                        text(icon).size(fsize).color(bt_col),
+                        text(status_str).size(fsize - 1.0).color(fg),
+                    ].spacing(6.0).align_y(Alignment::Center).into()
+                } else {
+                    let mut items: Vec<Element<'_, Message>> = vec![
+                        text(icon).size(fsize + 10.0).color(bt_col).into(),
+                        text("Bluetooth").size(fsize - 2.5).color(Color { a: 0.45, ..fg }).into(),
+                        text(status_str).size(fsize - 1.0).color(status_col).into(),
+                    ];
+                    if !device_str.is_empty() {
+                        items.push(
+                            text(device_str).size(fsize - 2.5).color(Color { a: 0.60, ..fg }).into()
+                        );
+                    }
+                    iced::widget::Column::from_vec(items)
+                        .spacing(4.0).align_x(Alignment::Center).into()
+                };
+                (content, bt_col)
+            }
+
+            // ── Weather ───────────────────────────────────────────────────────
+            "weather" => {
+                // Hide if location not configured or weather not yet fetched
+                if self.weather_location.is_empty() { return None; }
+
+                let sky_col = Color::from_rgba(0.53, 0.82, 0.96, prog); // sky blue
+                let icon = if nerd { "\u{f0599}" } else { "WX" }; // nf-md-weather_cloudy
+
+                let (weather_main, weather_detail) = if self.sys.weather_text.is_empty() {
+                    ("Fetching\u{2026}".to_string(), String::new())
+                } else {
+                    // wttr.in format 3 returns: "CityName: ConditionIcon Temp"
+                    // e.g. "London: ⛅️  +12°C"
+                    let raw = &self.sys.weather_text;
+                    if let Some(colon_pos) = raw.find(':') {
+                        let detail = raw[colon_pos + 1..].trim().to_string();
+                        let city   = raw[..colon_pos].trim().to_string();
+                        (city, detail)
+                    } else {
+                        (raw.clone(), String::new())
+                    }
+                };
+
+                let content: Element<'_, Message> = if theme == "minimal" {
+                    row![
+                        text(icon).size(fsize).color(sky_col),
+                        text(weather_main).size(fsize - 1.0).color(fg),
+                    ].spacing(6.0).align_y(Alignment::Center).into()
+                } else {
+                    let mut items: Vec<Element<'_, Message>> = vec![
+                        text(icon).size(fsize + 10.0).color(sky_col).into(),
+                        text("Weather").size(fsize - 2.5).color(Color { a: 0.45, ..fg }).into(),
+                        text(weather_main).size(fsize - 1.0).color(fg).into(),
+                    ];
+                    if !weather_detail.is_empty() {
+                        items.push(
+                            text(weather_detail).size(fsize - 0.5).color(sky_col).into()
+                        );
+                    }
+                    iced::widget::Column::from_vec(items)
+                        .spacing(4.0).align_x(Alignment::Center).into()
+                };
+                (content, sky_col)
             }
 
             _ => return None,
@@ -961,8 +1449,6 @@ impl Dashboard {
     // ── Subscriptions ─────────────────────────────────────────────────────────
 
     fn subscription(&self) -> Subscription<Message> {
-        // Always tick at 1 s to keep the clock current.
-        // When media is playing, upgrade to 60 fps for the equalizer animation.
         let tick_ms = if self.sys.media_playing { 16 } else { 1000 };
         Subscription::batch([
             iced::keyboard::listen().map(Message::KeyEvent),
@@ -984,9 +1470,14 @@ impl Dashboard {
 
 fn sys_stream() -> impl iced::futures::Stream<Item = Message> {
     iced::stream::channel(4, |mut sender: Sender<Message>| async move {
+        // Load weather_location once at stream startup
+        let weather_location = {
+            let config = load_config(default_path()).unwrap_or_default();
+            config.global.weather_location
+        };
         loop {
             tokio::time::sleep(Duration::from_secs(2)).await;
-            let snap = read_sys_snapshot().await;
+            let snap = read_sys_snapshot(weather_location.clone()).await;
             let _ = sender.try_send(Message::SysReady(snap));
         }
     })
@@ -999,8 +1490,10 @@ fn fmt_bytes(bytes: u64) -> String {
         format!("{:.1}G", bytes as f64 / 1_073_741_824.0)
     } else if bytes >= 1_048_576 {
         format!("{:.0}M", bytes as f64 / 1_048_576.0)
-    } else {
+    } else if bytes >= 1_024 {
         format!("{:.0}K", bytes as f64 / 1024.0)
+    } else {
+        format!("{bytes}B")
     }
 }
 
@@ -1013,7 +1506,7 @@ fn fmt_uptime(secs: u64) -> String {
 /// How many grid columns this card type spans (1 = normal, 2 = wide).
 fn card_span(item: &str) -> usize {
     match item {
-        "clock" | "media" | "power" => 2,
+        "clock" | "media" | "power" | "load" => 2,
         _ => 1,
     }
 }

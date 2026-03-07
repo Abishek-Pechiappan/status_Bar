@@ -40,7 +40,7 @@ notify = "8"
 sysinfo = "0.38"
 
 # ── UI / Wayland ──────────────────────────────────────────────────────────────
-iced            = { version = "0.14", features = ["tokio"] }
+iced            = { version = "0.14", features = ["tokio", "canvas"] }
 iced_layershell = "0.15"
 
 # ── Time ──────────────────────────────────────────────────────────────────────

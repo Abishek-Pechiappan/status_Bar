@@ -56,7 +56,8 @@ pub struct DashboardConfig {
     /// Ordered list of card types to display.
     /// Possible values: `"clock"`, `"network"`, `"battery"`, `"cpu"`, `"memory"`,
     /// `"disk"`, `"volume"`, `"brightness"`, `"media"`, `"power"`,
-    /// `"uptime"`, `"temperature"`, `"updates"`, `"notifications"`.
+    /// `"uptime"`, `"temperature"`, `"updates"`, `"notifications"`,
+    /// `"swap"`, `"load"`, `"gpu"`, `"bluetooth"`, `"weather"`.
     pub items: Vec<String>,
 }
 
@@ -119,6 +120,10 @@ pub struct GlobalConfig {
     /// Possible values: `"lock"`, `"sleep"`, `"hibernate"`, `"logout"`, `"reboot"`, `"shutdown"`.
     #[serde(default = "default_power_actions")]
     pub power_actions: Vec<String>,
+    /// Location string used for weather lookups (e.g. `"London"`, `"New York"`, `"48.8566,2.3522"`).
+    /// Empty string disables the weather card in the dashboard.
+    #[serde(default)]
+    pub weather_location: String,
 }
 
 impl Default for GlobalConfig {
@@ -138,6 +143,7 @@ impl Default for GlobalConfig {
             power_menu_style:   "overlay".to_string(),
             power_anim_style:   "slide".to_string(),
             power_actions:      default_power_actions(),
+            weather_location:   String::new(),
         }
     }
 }
