@@ -1,7 +1,7 @@
 pub mod schema;
 pub mod watcher;
 
-pub use schema::{DashConfig, DashboardConfig, ThemeConfig};
+pub use schema::{CardConfig, DashConfig, DashboardConfig, ThemeConfig};
 pub use watcher::ConfigWatcher;
 
 use std::path::{Path, PathBuf};

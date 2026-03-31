@@ -668,7 +668,13 @@ impl Dashboard {
         let mut card_idx = 0usize;
 
         for item in &self.dash_config.items {
-            let span = card_span(item.as_str()).min(cols);
+            let kind = item.kind.as_str();
+            // Use col_span from config if > 1, otherwise fall back to card_span() default.
+            let span = if item.col_span > 1 {
+                (item.col_span as usize).min(cols)
+            } else {
+                card_span(kind).min(cols)
+            };
             if row_span + span > cols && !row_items.is_empty() {
                 grid_rows.push(
                     iced::widget::Row::from_vec(std::mem::take(&mut row_items))
@@ -676,7 +682,7 @@ impl Dashboard {
                 );
                 row_span = 0;
             }
-            if let Some(card) = self.make_card(item.as_str(), span, card_idx) {
+            if let Some(card) = self.make_card(kind, span, card_idx) {
                 row_items.push(card);
                 row_span += span;
                 card_idx += 1;

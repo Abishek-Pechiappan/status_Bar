@@ -25,6 +25,24 @@ impl Default for DashConfig {
     }
 }
 
+/// Per-card layout configuration inside the bento dashboard grid.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CardConfig {
+    /// Card type identifier, e.g. `"clock"`, `"cpu"`, etc.
+    pub kind: String,
+    /// Number of columns this card spans (1–4).
+    pub col_span: u8,
+    /// Number of rows this card spans (1–3).
+    pub row_span: u8,
+}
+
+impl Default for CardConfig {
+    fn default() -> Self {
+        Self { kind: String::new(), col_span: 1, row_span: 1 }
+    }
+}
+
 /// Configuration for the bento-style full-screen dashboard overlay.
 ///
 /// Launch with `bar-dashboard` — bind it to a Hyprland key:
@@ -38,12 +56,12 @@ pub struct DashboardConfig {
     pub theme: String,
     /// Number of columns in the bento grid (2–4).  Default: 3.
     pub columns: u8,
-    /// Ordered list of card types to display.
-    /// Possible values: `"clock"`, `"network"`, `"battery"`, `"cpu"`, `"memory"`,
+    /// Ordered list of cards to display, each with optional span overrides.
+    /// Possible `kind` values: `"clock"`, `"network"`, `"battery"`, `"cpu"`, `"memory"`,
     /// `"disk"`, `"volume"`, `"brightness"`, `"media"`, `"power"`,
     /// `"uptime"`, `"temperature"`, `"updates"`,
     /// `"swap"`, `"load"`, `"gpu"`, `"bluetooth"`, `"weather"`.
-    pub items: Vec<String>,
+    pub items: Vec<CardConfig>,
 }
 
 impl Default for DashboardConfig {
@@ -57,9 +75,11 @@ impl Default for DashboardConfig {
     }
 }
 
-fn default_dashboard_items() -> Vec<String> {
+fn default_dashboard_items() -> Vec<CardConfig> {
     ["clock", "network", "battery", "cpu", "memory", "disk", "volume", "media", "power"]
-        .iter().map(|s| s.to_string()).collect()
+        .iter()
+        .map(|&kind| CardConfig { kind: kind.to_string(), col_span: 1, row_span: 1 })
+        .collect()
 }
 
 /// Theme / styling configuration.

@@ -3,6 +3,7 @@ members = [
     "crates/config",
     "crates/theme",
     "crates/dashboard",
+    "crates/editor",
 ]
 resolver = "2"
 
